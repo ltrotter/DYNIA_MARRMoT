@@ -1,4 +1,4 @@
-function gradients = calc_cd_gradient(cd,x_sorted,bins)
+function [breaks, gradients] = calc_cd_gradient(cd,x_sorted,bins)
 
 if nargin < 3 || isempty(bins)
     bins = min(size(x_sorted,2)/2, 20);
