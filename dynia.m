@@ -1,19 +1,50 @@
 function [cd_gradient,...
           cd_gradient_breaks,...
-          info_content,...
-          theta_sample,...
-          Qsim,...
-          perf_over_time] = ...
-                            dynia(model, n, Qobs, of_name, window)
+          info_content] = ...
+                          dynia(model, n, Qobs, of_name, window, file_prefix)
 
-% create Monte-Carlo sample of parameter sets
-theta_sample = unif_sample_par(model,n);
+if nargin < 6 || isempty(file_prefix); file_prefix = 'DYNIA'; end
+file_theta = [file_prefix, '_theta_samples.csv'];
+file_Qsim  = [file_prefix, '_Q_sim.csv'];
+file_perf  = [file_prefix, '_OF_value_w', int2str(window), '.csv'];
 
-% run the model with all of the samples created
-Qsim = run_with_par_sample(model, theta_sample);
+% first check if any chunk was already run (i.e. if this is a rerun
+% because the system ran out of time) and subtract from the number that
+% still needs running
+if isfile(file_theta)
+    n_to_do = n - numel(textread(file_theta,'%1c%*[^\n]'));
+else
+    n_to_do = n;
+end
 
-% calculate performance over a moving window of width window
-perf_over_time = calc_of_moving_window(Qsim, Qobs, window, of_name);
+chunks  = round(n_to_do/1000);    % divide it into chuncks of rougly 1000 points
+n_chunk = round(n_to_do/chunks);  % number of points per chunck
+
+% for each chunk
+while chunks > 0
+    % create Monte-Carlo sample of parameter sets
+    theta_sample_chunk = unif_sample_par(model,n_chunk);
+    
+    % run the model with all of the samples created
+    Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
+
+    % calculate performance over a moving window of width window
+    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, of_name);
+
+    % write both to file (appending to make sure you don't lose the values 
+    % from the previous chunks), so that it can be retrieved afterwards
+    writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
+    writematrix(Qsim_chunk', file_Qsim, "WriteMode", "append");
+    writematrix(perf_over_time_chunk', file_perf, "WriteMode", "append");
+
+    chunks = chunks - 1;
+end
+
+% after all simulations are finished; open the three final files and
+% continue
+theta_sample = readmatrix(file_theta)';
+Qsim = readmatrix(file_Qsim)';
+perf_over_time = readmatrix(file_perf_over_time)';
 
 % from this point on, timesteps with missing Qsim (where we couldn't
 % calculate the objective function) can just be ignored, as long as we keep
