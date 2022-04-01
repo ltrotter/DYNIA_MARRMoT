@@ -10,7 +10,8 @@ defaultopt = struct('repeats', 2e5, ...
                     'window_step', 1,...
                     'file_prefix', 'DYNIA', ...
                     'chunk_size', 1000,...
-                    'precision', 4);
+                    'precision_Q', 4, ...
+                    'precision_OF', 4);
 defaultopt.of_args = cell(0);
 
 if nargin < 3 || isempty(options); options = struct(); end
@@ -22,7 +23,8 @@ window = optimget(options, 'window_size', defaultopt, 'fast');
 step = optimget(options, 'window_step', defaultopt, 'fast');
 file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
 c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
-precision = optimget(options, 'precision', defaultopt, 'fast');
+precision_Q = optimget(options, 'precision_Q', defaultopt, 'fast');
+precision_OF = optimget(options, 'precision_OF', defaultopt, 'fast');
 of_args = optimget(options, 'of_args', defaultopt, 'fast');
 
 file_theta = [file_prefix, '_theta_samples.csv'];
@@ -66,8 +68,8 @@ while chunks > 0
     % write both to file (appending to make sure you don't lose the values 
     % from the previous chunks), so that it can be retrieved afterwards
     writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
-    writematrix(round(Qsim_chunk, precision)', [file_Qsim,'_',int2str(chunks),'.csv'], "WriteMode", "append");
-    writematrix(round(perf_over_time_chunk, precision)', [file_perf,'_',int2str(chunks),'.csv'], "WriteMode", "append");
+    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',int2str(chunks),'.csv'], "WriteMode", "append");
+    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',int2str(chunks),'.csv'], "WriteMode", "append");
 
     chunks = chunks - 1;
     n_done = n_done + n_chunk;
