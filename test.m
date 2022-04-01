@@ -19,9 +19,4 @@ opts.of_name = 'of_bias_penalised_log';
 opts.of_args = {[],'of_mean_hilo_root5_KGE'};
 opts.file_prefix = 'test_dynia';
 
-[cd_gradient,...
-    cd_gradient_breaks,...
-    info_content,...
-    OF_idx] = dynia(m, Qobs, opts);
-
-save("test_output.mat","cd_gradient", "cd_gradient_breaks", "info_content","OF_idx");
+dynia(m, Qobs, opts);
