@@ -1,9 +1,23 @@
 function [cd_gradient,...
           cd_gradient_breaks,...
           info_content] = ...
-                          dynia(model, n, Qobs, of_name, window, file_prefix)
+                          dynia(model, Qobs, options)
 
-if nargin < 6 || isempty(file_prefix); file_prefix = 'DYNIA'; end
+defaultopt = struct('repeats', 2e5, ...
+                    'of_name', 'of_KGE', ...
+                    'window_size', 31, ...
+                    'file_prefix', 'DYNIA', ...
+                    'chunk_size', 1000);%, 'Display', 'off');
+
+if nargin < 3 || isempty(options); options = struct(); end
+
+% get options
+n = optimget(options, 'repeats', defaultopt, 'fast');
+of_name = optimget(options, 'of_name', defaultopt, 'fast');
+window = optimget(options, 'window_size', defaultopt, 'fast');
+file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
+c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
+
 file_theta = [file_prefix, '_theta_samples.csv'];
 file_Qsim  = [file_prefix, '_Q_sim.csv'];
 file_perf  = [file_prefix, '_OF_value_w', int2str(window), '.csv'];
@@ -17,8 +31,8 @@ else
     n_to_do = n;
 end
 
-chunks  = round(n_to_do/1000);    % divide it into chuncks of rougly 1000 points
-n_chunk = round(n_to_do/chunks);  % number of points per chunck
+chunks  = round(n_to_do/c_size);  % divide it into chuncks of rougly c_size points
+n_chunk = round(n_to_do/chunks);  % actual number of points per chunck
 
 % for each chunk
 while chunks > 0
