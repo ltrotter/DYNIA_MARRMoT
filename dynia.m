@@ -58,18 +58,18 @@ n_chunk = ceil(n_to_do/chunks);  % actual number of points per chunck
 while chunks > 0
     % create Monte-Carlo sample of parameter sets
     theta_sample_chunk = unif_sample_par(model,n_chunk);
-    
+
     % run the model with all of the samples created
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
     perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
 
-    % write both to file (appending to make sure you don't lose the values 
+    % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
     writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
-    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',int2str(chunks),'.csv'], "WriteMode", "append");
-    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',int2str(chunks),'.csv'], "WriteMode", "append");
+    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',num2str(chunks,'%03d' ),'.csv'], "WriteMode", "append");
+    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',num2str(chunks,'%03d'),'.csv'], "WriteMode", "append");
 
     chunks = chunks - 1;
     n_done = n_done + n_chunk;
