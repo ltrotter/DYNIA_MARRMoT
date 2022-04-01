@@ -1,4 +1,3 @@
-n = 10000;
 m = m_07_gr4j_4p_2s();
 load MARRMoT_example_data.mat
 input_climatology.precip   = data_MARRMoT_examples.precipitation;                   % Daily data: P rate  [mm/d]
@@ -11,11 +10,17 @@ m.solver_opts = m.default_solver_opts();
 m.input_climate = input_climatology;
 
 Qobs = data_MARRMoT_examples.streamflow;
-of_name = 'of_KGE';
-window = 31;
+
+opts.repeats = 250;
+opts.chunk_size = 25;
+opts.window_size = 31;
+opts.window_step = 7;
+opts.of_name = 'of_NSE';
+opts.file_prefix = 'test_dynia';
 
 [cd_gradient,...
     cd_gradient_breaks,...
-    info_content] = dynia(m, n, Qobs, of_name, window);
+    info_content,...
+    OF_idx] = dynia(m, Qobs, opts);
 
-save("test_output.mat","cd_gradient","info_content","theta_sample","Qsim","perf_over_time");
+save("test_output.mat","cd_gradient", "cd_gradient_breaks", "info_content","OF_idx");
