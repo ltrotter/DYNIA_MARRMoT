@@ -1,7 +1,7 @@
 function [breaks, gradients] = calc_cd_gradient(cd,x_sorted,bins)
 
 if nargin < 3 || isempty(bins)
-    bins = min(size(x_sorted,2)/2, 20);
+    bins = min(round(size(x_sorted,2)/3), 20);
 end
 
 min_x = squeeze(min(x_sorted,[],[1,2]));
