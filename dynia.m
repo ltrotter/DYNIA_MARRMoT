@@ -13,6 +13,8 @@ file_perf  = [file_prefix, '_OF_value_w', int2str(window), '.csv'];
 % still needs running
 if isfile(file_theta)
     n_to_do = n - numel(textread(file_theta,'%1c%*[^\n]'));
+else
+    n_to_do = n;
 end
 
 chunks  = round(n_to_do/1000);    % divide it into chuncks of rougly 1000 points
