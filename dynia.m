@@ -6,6 +6,7 @@ function [cd_gradient,...
 defaultopt = struct('repeats', 2e5, ...
                     'of_name', 'of_KGE', ...
                     'window_size', 31, ...
+                    'window_step', 1,...
                     'file_prefix', 'DYNIA', ...
                     'chunk_size', 1000);%, 'Display', 'off');
 
@@ -15,24 +16,36 @@ if nargin < 3 || isempty(options); options = struct(); end
 n = optimget(options, 'repeats', defaultopt, 'fast');
 of_name = optimget(options, 'of_name', defaultopt, 'fast');
 window = optimget(options, 'window_size', defaultopt, 'fast');
+step = optimget(options, 'window_step', defaultopt, 'fast');
 file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
 c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
 
 file_theta = [file_prefix, '_theta_samples.csv'];
 file_Qsim  = [file_prefix, '_Q_sim.csv'];
-file_perf  = [file_prefix, '_OF_value_w', int2str(window), '.csv'];
+file_perf  = [file_prefix, '_OF_value.csv'];
 
 % first check if any chunk was already run (i.e. if this is a rerun
-% because the system ran out of time) and subtract from the number that
-% still needs running
-if isfile(file_theta)
-    n_to_do = n - numel(textread(file_theta,'%1c%*[^\n]'));
-else
+% because the system ran out of time) and make sure the options used were
+% the same, then subtract the ones already ran to the total number of
+% repeats.
+% if this is the first time you run this, write the options used at the top
+% of the file, so that they can be checked afterwards
+header = ['OF = ', of_name, '; window size = ', int2str(window), '; window step = ', int2str(step)];
+if any(~isfile(file_perf))
     n_to_do = n;
+    OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);
+    writematrix(header, file_perf);
+    writematrix(OF_idx, file_perf, "WriteMode", "append");
+else
+    fid = fopen(file_perf);
+    old_header = fgets(fid);
+    if any(deblank(old_header) ~= header); Error; end
+    fclose(fid);
+    n_to_do = n - (numel(textread(file_perf,'%1c%*[^\n]')) -2);
 end
 
 chunks  = round(n_to_do/c_size);  % divide it into chuncks of rougly c_size points
-n_chunk = round(n_to_do/chunks);  % actual number of points per chunck
+n_chunk = ceil(n_to_do/chunks);  % actual number of points per chunck
 
 % for each chunk
 while chunks > 0
@@ -43,7 +56,7 @@ while chunks > 0
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
-    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, of_name);
+    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name);
 
     % write both to file (appending to make sure you don't lose the values 
     % from the previous chunks), so that it can be retrieved afterwards
