@@ -42,12 +42,13 @@ file_log   = [file_prefix, '.mat'];
 % of the file, so that they can be checked afterwards
 
 if any(~isfile(file_log))
-    n_done  = 0;
+    n_done = 0;
+    last_fid = 0;
     OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);
-    save(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done");
+    save(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
 else
     disp([file_log ' found: some options will be loaded.'])
-    load(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done")
+    load(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
 end
 
 n_to_do = max(0,n-n_done);
@@ -68,12 +69,13 @@ while chunks > 0
     % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
     writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
-    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',num2str(chunks,'%03d' ),'.csv'], "WriteMode", "append");
-    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',num2str(chunks,'%03d'),'.csv'], "WriteMode", "append");
+    last_fid = last_fid + 1;
+    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',num2str(last_fid,'%03d' ),'.csv']);
+    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',num2str(last_fid,'%03d'),'.csv']);
 
     chunks = chunks - 1;
     n_done = n_done + n_chunk;
-    save(file_log, "n_done", "-append");
+    save(file_log, "n_done", "last_fid", "-append");
 end
 
 % after all simulations are finished; open the three final files and
