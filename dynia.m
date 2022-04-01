@@ -10,7 +10,8 @@ defaultopt = struct('repeats', 2e5, ...
                     'window_step', 1,...
                     'file_prefix', 'DYNIA', ...
                     'chunk_size', 1000,...
-                    'precision', 4);%, 'Display', 'off');
+                    'precision', 4);
+defaultopt.of_args = cell(0);
 
 if nargin < 3 || isempty(options); options = struct(); end
 
@@ -22,6 +23,7 @@ step = optimget(options, 'window_step', defaultopt, 'fast');
 file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
 c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
 precision = optimget(options, 'precision', defaultopt, 'fast');
+of_args = optimget(options, 'of_args', defaultopt, 'fast');
 
 file_theta = [file_prefix, '_theta_samples.csv'];
 file_Qsim  = [file_prefix, '_Q_sim.csv'];
@@ -59,7 +61,7 @@ while chunks > 0
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
-    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name);
+    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
 
     % write both to file (appending to make sure you don't lose the values 
     % from the previous chunks), so that it can be retrieved afterwards

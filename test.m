@@ -15,7 +15,8 @@ opts.repeats = 250;
 opts.chunk_size = 25;
 opts.window_size = 31;
 opts.window_step = 7;
-opts.of_name = 'of_NSE';
+opts.of_name = 'of_bias_penalised_log';
+opts.of_args = {[],'of_mean_hilo_root5_KGE'};
 opts.file_prefix = 'test_dynia';
 
 [cd_gradient,...
