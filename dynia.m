@@ -10,7 +10,9 @@ defaultopt = struct('repeats', 2e5, ...
                     'window_step', 1,...
                     'file_prefix', 'DYNIA', ...
                     'chunk_size', 1000,...
-                    'precision', 4);%, 'Display', 'off');
+                    'precision_Q', 4, ...
+                    'precision_OF', 4);
+defaultopt.of_args = cell(0);
 
 if nargin < 3 || isempty(options); options = struct(); end
 
@@ -21,11 +23,16 @@ window = optimget(options, 'window_size', defaultopt, 'fast');
 step = optimget(options, 'window_step', defaultopt, 'fast');
 file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
 c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
-precision = optimget(options, 'precision', defaultopt, 'fast');
+precision_Q = optimget(options, 'precision_Q', defaultopt, 'fast');
+precision_OF = optimget(options, 'precision_OF', defaultopt, 'fast');
+of_args = optimget(options, 'of_args', defaultopt, 'fast');
 
 file_theta = [file_prefix, '_theta_samples.csv'];
-file_Qsim  = [file_prefix, '_Q_sim.csv'];
-file_perf  = [file_prefix, '_OF_value.csv'];
+file_Qsim  = [file_prefix, '_Q_sim'];
+file_perf  = [file_prefix, '_OF_value'];
+file_log   = [file_prefix, '.mat'];
+
+% calculate the total number of chunks 
 
 % first check if any chunk was already run (i.e. if this is a rerun
 % because the system ran out of time) and make sure the options used were
@@ -33,20 +40,17 @@ file_perf  = [file_prefix, '_OF_value.csv'];
 % repeats.
 % if this is the first time you run this, write the options used at the top
 % of the file, so that they can be checked afterwards
-header = ['OF = ', of_name, '; window size = ', int2str(window), '; window step = ', int2str(step)];
-OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);
-if any(~isfile(file_perf))
-    n_to_do = n;
-    writematrix(header, file_perf);
-    writematrix(OF_idx, file_perf, "WriteMode", "append");
+
+if any(~isfile(file_log))
+    n_done  = 0;
+    OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);
+    save(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done");
 else
-    fid = fopen(file_perf);
-    old_header = fgets(fid);
-    if any(deblank(old_header) ~= header); Error; end
-    fclose(fid);
-    n_to_do = n - (numel(textread(file_perf,'%1c%*[^\n]')) -2);
+    disp([file_log ' found: some options will be loaded.'])
+    load(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done")
 end
 
+n_to_do = max(0,n-n_done);
 chunks  = round(n_to_do/c_size);  % divide it into chuncks of rougly c_size points
 n_chunk = ceil(n_to_do/chunks);  % actual number of points per chunck
 
@@ -59,21 +63,25 @@ while chunks > 0
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
-    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name);
+    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
 
     % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
     writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
-    writematrix(round(Qsim_chunk, precision)', file_Qsim, "WriteMode", "append");
-    writematrix(round(perf_over_time_chunk, precision)', file_perf, "WriteMode", "append");
+    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',int2str(chunks),'.csv'], "WriteMode", "append");
+    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',int2str(chunks),'.csv'], "WriteMode", "append");
 
     chunks = chunks - 1;
+    n_done = n_done + n_chunk;
+    save(file_log, "n_done", "-append");
 end
 
 % after all simulations are finished; open the three final files and
 % continue
 theta_sample = readmatrix(file_theta)';
-perf_over_time = readmatrix(file_perf, 'NumHeaderLines',2)';
+perf_ds = datastore([file_perf, '_*.csv']);
+perf_over_time = table2array(perf_ds.readall())';
+%perf_over_time = readmatrix(file_perf, 'NumHeaderLines',2)';
 
 % from this point on, timesteps with missing Qsim (where we couldn't
 % calculate the objective function) can just be ignored, as long as we keep
@@ -109,3 +117,5 @@ info_content(idx_non_missing,:) = info_content_non_missing;
 
 cd_gradient = NaN(numel(OF_idx), size(cd_gradient_non_missing,2), model.numParams);
 cd_gradient(idx_non_missing,:,:) = cd_gradient_non_missing;
+
+save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "-append");
