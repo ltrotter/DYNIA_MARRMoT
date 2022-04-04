@@ -1,4 +1,4 @@
-function of_over_time = calc_of_moving_window(Qsim,Qobs,window,step,of_name,varargin)
+function [idx_non_missing, of_over_time_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,varargin)
 
 [T,n] = size(Qsim);
 
@@ -14,3 +14,7 @@ for i = 1:numel(idx)
         of_over_time(i,p) = feval(of_name,Qobs_in_window,Qsim_in_window(:,p),varargin{:});
     end
 end
+
+missing_timesteps = isnan(of_over_time(:,1));
+of_over_time_non_missing = of_over_time(~missing_timesteps,:);
+idx_non_missing = idx(~missing_timesteps);
