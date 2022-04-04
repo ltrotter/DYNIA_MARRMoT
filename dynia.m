@@ -44,7 +44,7 @@ file_log   = [file_prefix, '.mat'];
 if any(~isfile(file_log))
     n_done = 0;
     last_fid = 0;
-    OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);
+    OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);     % this is a raw estimate, after the calculation of the OF, it will be updated
     save(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
 else
     disp([file_log ' found: some options will be loaded.'])
@@ -64,7 +64,7 @@ while chunks > 0
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
-    perf_over_time_chunk = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
+    [OF_idx, perf_over_time_chunk] = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
 
     % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
@@ -76,29 +76,37 @@ while chunks > 0
     chunks = chunks - 1;
     n_done = n_done + n_chunk;
     save(file_log, "n_done", "last_fid", "-append");
+    if chunks == 1; save(file_log, "OF_idx", "-append"); end
 end
 
-% after all simulations are finished; open the three final files and
+% after all simulations are finished; open the final files and
 % continue
 theta_sample = readmatrix(file_theta)';
 perf_ds = datastore([file_perf, '_*.csv']);
-perf_over_time = table2array(perf_ds.readall())';
-%perf_over_time = readmatrix(file_perf, 'NumHeaderLines',2)';
 
-% from this point on, timesteps with missing Qsim (where we couldn't
-% calculate the objective function) can just be ignored, as long as we keep
-% track of their position to re-add them in the end as missing rows
-idx_non_missing = find(~isnan(perf_over_time(:,1)));
-perf_over_time_non_missing = perf_over_time(idx_non_missing,:);
+% create empty containers for top10 performance and parameters at every
+% timestep
+which_top_10 = zeros(numel(OF_idx), round(n/10));
+perf_top_10 = zeros(numel(OF_idx), round(n/10));
 
-% keep top 10% of performances, which_top tells you the idx of the
-% parameters used
-[perf_top_10, which_top_10] = maxk(perf_over_time_non_missing, round(n/10),2);
-% make sure all performances are >=0 by adding the minimum performance
-perf_top_10_pos = perf_top_10 - min(min(perf_top_10,[],'all'),0);
+% divide this in chunks too otherwise it is too large:
+e = 0;
+while e < numel(OF_idx)
+    s = e + 1; e = min(s + c_size -1, numel(OF_idx));
+    % select variable for each chunk
+    perf_ds.SelectedVariableNames = arrayfun(@(i) ['Var' int2str(i)], s:e, 'UniformOutput', false);
+    perf_over_time_chunk = table2array(readall(perf_ds))';
+    
+    % keep top 10% of performances, which_top tells you the idx of the
+    % parameters used
+    [perf_top_10(s:e,:), which_top_10(s:e,:)] = maxk(perf_over_time_chunk, round(n/10),2);
+end
+
+    % make sure all performances are >=0 by adding the minimum performance
+    perf_top_10_pos = perf_top_10 - min(min(perf_top_10,[],'all'),0);
 
 % create empty container for best thetas for each timestep
-theta_top_10 = zeros(numel(idx_non_missing), round(n/10), model.numParams);
+theta_top_10 = zeros(numel(OF_idx), round(n/10), model.numParams);
 % populate with the best sets of theta for each timestep
 for t=1:size(theta_top_10,1)
     theta_top_10(t,:,:) = theta_sample(:,which_top_10(t,:))';
@@ -108,16 +116,9 @@ end
 [cd_top_10, theta_top_10_sorted] = calc_cd_multidim(theta_top_10, perf_top_10_pos);
 
 % calculate information content for each parameter at each timestep
-info_content_non_missing = calc_info_content(cd_top_10, theta_top_10_sorted);
+info_content = calc_info_content(cd_top_10, theta_top_10_sorted);
 
 % calculate gradients of the (binned) cumulative distribution
-[cd_gradient_breaks, cd_gradient_non_missing] = calc_cd_gradient(cd_top_10, theta_top_10_sorted);
-
-%re-add in the timesteps with missing data
-info_content = NaN(numel(OF_idx), model.numParams);
-info_content(idx_non_missing,:) = info_content_non_missing;
-
-cd_gradient = NaN(numel(OF_idx), size(cd_gradient_non_missing,2), model.numParams);
-cd_gradient(idx_non_missing,:,:) = cd_gradient_non_missing;
+[cd_gradient_breaks, cd_gradient] = calc_cd_gradient(cd_top_10, theta_top_10_sorted);
 
 save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "-append");
