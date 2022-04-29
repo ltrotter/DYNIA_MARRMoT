@@ -64,7 +64,7 @@ while chunks > 0
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
 
     % calculate performance over a moving window of width window
-    [OF_idx, perf_over_time_chunk] = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, of_args{:});
+    [OF_idx, perf_over_time_chunk] = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, precision_Q+1, of_args{:});
 
     % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
