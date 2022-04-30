@@ -93,8 +93,8 @@ perf_top_10 = zeros(numel(OF_idx), round(n/10));
 e = 0;
 c_size2 = round(c_size/(n/numel(Qobs))); 
 while e < numel(OF_idx)
-    disp(["extracting performance: ", int2str(s) ":" int2str(e), "/ of", int2str(numel(OF_idx))])
     s = e + 1; e = min(s + c_size2 -1, numel(OF_idx));
+    disp(["extracting performance: ", int2str(s) ":" int2str(e), "/ of", int2str(numel(OF_idx))])
     % select variable for each chunk
     perf_ds.SelectedVariableNames = arrayfun(@(i) ['Var' int2str(i)], s:e, 'UniformOutput', false);
     perf_over_time_chunk = table2array(readall(perf_ds))';
