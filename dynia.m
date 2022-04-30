@@ -92,6 +92,7 @@ perf_top_10 = zeros(numel(OF_idx), round(n/10));
 % divide this in chunks too otherwise it is too large:
 e = 0;
 while e < numel(OF_idx)
+    disp(["extracting performance: ", int2str(s) ":" int2str(e), "/ of", int2str(numel(OF_idx))])
     s = e + 1; e = min(s + c_size -1, numel(OF_idx));
     % select variable for each chunk
     perf_ds.SelectedVariableNames = arrayfun(@(i) ['Var' int2str(i)], s:e, 'UniformOutput', false);
@@ -121,4 +122,4 @@ info_content = calc_info_content(cd_top_10, theta_top_10_sorted);
 % calculate gradients of the (binned) cumulative distribution
 [cd_gradient_breaks, cd_gradient] = calc_cd_gradient(cd_top_10, theta_top_10_sorted);
 
-save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "-append");
+save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "perf_top_10", "-append");
