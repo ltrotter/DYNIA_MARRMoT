@@ -94,7 +94,7 @@ e = 0;
 c_size2 = round(c_size/(n/numel(Qobs))); 
 while e < numel(OF_idx)
     s = e + 1; e = min(s + c_size2 -1, numel(OF_idx));
-    disp(["extracting performance: ", int2str(s) ":" int2str(e), "/ of", int2str(numel(OF_idx))])
+    disp(['extracting performance: ', int2str(s) ':' int2str(e), '/', int2str(numel(OF_idx))])
     % select variable for each chunk
     perf_ds.SelectedVariableNames = arrayfun(@(i) ['Var' int2str(i)], s:e, 'UniformOutput', false);
     perf_over_time_chunk = table2array(readall(perf_ds))';
@@ -104,23 +104,29 @@ while e < numel(OF_idx)
     [perf_top_10(s:e,:), which_top_10(s:e,:)] = maxk(perf_over_time_chunk, round(n/10),2);
 end
 
-    % make sure all performances are >=0 by adding the minimum performance
-    perf_top_10_pos = perf_top_10 - min(min(perf_top_10,[],'all'),0);
+% only keep the performances which are > 0
+perf_top_pos = perf_top_10(:, ~all(perf_top_10<0, 1));
+which_top_pos = which_top_10(:, ~all(perf_top_10<0, 1));
+perf_top_pos(perf_top_pos<0) = nan;
+which_top_pos(isnan(perf_top_pos)) =nan;
 
 % create empty container for best thetas for each timestep
-theta_top_10 = zeros(numel(OF_idx), round(n/10), model.numParams);
+theta_top_pos = NaN(size(which_top_pos,1), size(which_top_pos,2), model.numParams);
 % populate with the best sets of theta for each timestep
-for t=1:size(theta_top_10,1)
-    theta_top_10(t,:,:) = theta_sample(:,which_top_10(t,:))';
+for t=1:size(theta_top_pos,1)
+    raw_ids = which_top_pos(t,:);
+    ids_not_nan = raw_ids(~isnan(raw_ids));
+    n_not_nan = numel(ids_not_nan);
+    theta_top_pos(t,1:n_not_nan,:) = theta_sample(:,ids_not_nan)';
 end
 
 % calculate cumulative distributions
-[cd_top_10, theta_top_10_sorted] = calc_cd_multidim(theta_top_10, perf_top_10_pos);
+[cd_top, theta_top_sorted] = calc_cd_multidim(theta_top_pos, perf_top_pos);
 
 % calculate information content for each parameter at each timestep
-info_content = calc_info_content(cd_top_10, theta_top_10_sorted);
+info_content = calc_info_content(cd_top, theta_top_sorted);
 
 % calculate gradients of the (binned) cumulative distribution
-[cd_gradient_breaks, cd_gradient] = calc_cd_gradient(cd_top_10, theta_top_10_sorted);
+[cd_gradient_breaks, cd_gradient] = calc_cd_gradient(cd_top, theta_top_sorted);
 
-save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "perf_top_10", "-append");
+save(file_log, "cd_gradient", "cd_gradient_breaks", "info_content", "perf_top_pos", "-append");

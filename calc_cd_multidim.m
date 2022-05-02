@@ -10,7 +10,7 @@ function [cd, x_sorted] = calc_cd_multidim(x,y)
 % sort each parameter at each timestep from smallest to largest
 [x_sorted, idx_x_sorted] = sort(x, 2);
 
-y_normal = y ./ sum(y,2);
+y_normal = y ./ sum(y,2, 'omitnan');
 
 % create empty container for the cum distributions
 cd = zeros(size(x));
