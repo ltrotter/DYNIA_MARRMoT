@@ -32,8 +32,6 @@ file_Qsim  = [file_prefix, '_Q_sim'];
 file_perf  = [file_prefix, '_OF_value'];
 file_log   = [file_prefix, '.mat'];
 
-% calculate the total number of chunks 
-
 % first check if any chunk was already run (i.e. if this is a rerun
 % because the system ran out of time) and make sure the options used were
 % the same, then subtract the ones already ran to the total number of
@@ -42,6 +40,9 @@ file_log   = [file_prefix, '.mat'];
 % of the file, so that they can be checked afterwards
 
 if any(~isfile(file_log))
+    % create all thetas and save to file right away
+    theta_sample = lhs_sample_par(model,n);
+    writematrix(theta_sample', file_theta); 
     n_done = 0;
     last_fid = 0;
     OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);     % this is a raw estimate, after the calculation of the OF, it will be updated
@@ -51,14 +52,16 @@ else
     load(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
 end
 
+% calculate the total number of chunks
 n_to_do = max(0,n-n_done);
 chunks  = round(n_to_do/c_size);  % divide it into chuncks of rougly c_size points
 n_chunk = ceil(n_to_do/chunks);  % actual number of points per chunck
 
 % for each chunk
 while chunks > 0
-    % create Monte-Carlo sample of parameter sets
-    theta_sample_chunk = unif_sample_par(model,n_chunk);
+    % get the thetas from the file saved before
+    range_theta = [num2str(n_done+1), ':', num2str(n_done+n_chunk)];
+    theta_sample_chunk = readmatrix(file_theta, 'Range', range_theta)';
 
     % run the model with all of the samples created
     Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
@@ -68,7 +71,6 @@ while chunks > 0
 
     % write both to file (appending to make sure you don't lose the values
     % from the previous chunks), so that it can be retrieved afterwards
-    writematrix(theta_sample_chunk', file_theta, "WriteMode", "append");
     last_fid = last_fid + 1;
     writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',num2str(last_fid,'%03d' ),'.csv']);
     writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',num2str(last_fid,'%03d'),'.csv']);

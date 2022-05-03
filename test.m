@@ -14,8 +14,8 @@ Qobs(1:100) = nan;
 
 opts.repeats = 50;
 opts.chunk_size = 10;
-opts.window_size = 31;
-opts.window_step = 7;
+opts.window_size = 365;
+opts.window_step = 30;
 opts.of_name = 'of_bias_penalised_log';
 opts.of_args = {[],'of_mean_hilo_root5_KGE'};
 opts.file_prefix = 'test_dynia';
