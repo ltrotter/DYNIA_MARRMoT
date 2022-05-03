@@ -12,12 +12,11 @@ m.input_climate = input_climatology;
 Qobs = data_MARRMoT_examples.streamflow;
 Qobs(1:100) = nan;
 
-opts.repeats = 130;
-%opts.chunk_size = 10;
+opts.repeats = 2000;
 opts.window_size = 31;
 opts.window_step = 7;
 opts.of_name = 'of_bias_penalised_log';
 opts.of_args = {[],'of_mean_hilo_root5_KGE'};
 opts.file_prefix = 'test_dynia';
 
-dynia(m, Qobs, opts);
+run_dynia_simulations(m, Qobs, opts);

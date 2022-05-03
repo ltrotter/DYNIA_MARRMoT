@@ -1,44 +1,13 @@
 function [cd_gradient,...
           cd_gradient_breaks,...
           info_content] = ...
-                          dynia(model, Qobs, options)
+                          dynia(log_file)
 
-% get all options
-if nargin <3 || isempty(options); options = struct(); end
-o = get_dynia_options(options);
+load(log_file);
 
-% check if this has been started already
-file_log   = [o.file_prefix, '.mat'];
-
-% if the log file does not exists or if the user decided to overwrite
-if ~isfile(file_log) || o.overwrite
-
-    % create all thetas
-    simdata.theta_sample = lhs_sample_par(model,o.n);
-
-    % identify the indices of the OF calculation, based on Qobs
-    [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
-
-    % set that none have happened yet
-    simdata.n_done = 0;
-    simdata.pc_done = 0;
-
-    % save the options and the thetas to a new log file
-    save(file_log, "o", "model", "Qobs", "simdata");
-
-% otherwise, this is a restart
-else
-    % warn that all options will be loaded (i.e. the ones given are all discarded).
-    disp([file_log ' found: options will be loaded.'])
-    load(file_log, "o", "model", "Qobs", "simdata");
+for j = 1:numel(simdata.OF_idx)
+    this_file_name = [o.file_prefix '_' num2str(simdata.OF_idx(j)) '.json'];
 end
-
-if(simdata.n_done) < o.n
-    % run all the simulations, with the appropriate restarting
-    run_dynia_simulation(file_log, simdata, model, Qobs, o)
-end
-
-
 
 % create empty containers for top10 performance and parameters at every
 % timestep
