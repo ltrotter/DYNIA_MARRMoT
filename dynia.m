@@ -1,90 +1,44 @@
 function [cd_gradient,...
           cd_gradient_breaks,...
-          info_content,...
-          OF_idx] = ...
+          info_content] = ...
                           dynia(model, Qobs, options)
 
-defaultopt = struct('repeats', 2e5, ...
-                    'of_name', 'of_KGE', ...
-                    'window_size', 31, ...
-                    'window_step', 1,...
-                    'file_prefix', 'DYNIA', ...
-                    'chunk_size', 1000,...
-                    'precision_Q', 4, ...
-                    'precision_OF', 4);
-defaultopt.of_args = cell(0);
+% get all options
+if nargin <3 || isempty(options); options = struct(); end
+o = get_dynia_options(options);
 
-if nargin < 3 || isempty(options); options = struct(); end
+% check if this has been started already
+file_log   = [o.file_prefix, '.mat'];
 
-% get options
-n = optimget(options, 'repeats', defaultopt, 'fast');
-of_name = optimget(options, 'of_name', defaultopt, 'fast');
-window = optimget(options, 'window_size', defaultopt, 'fast');
-step = optimget(options, 'window_step', defaultopt, 'fast');
-file_prefix = optimget(options, 'file_prefix', defaultopt, 'fast');
-c_size = optimget(options, 'chunk_size', defaultopt, 'fast');
-precision_Q = optimget(options, 'precision_Q', defaultopt, 'fast');
-precision_OF = optimget(options, 'precision_OF', defaultopt, 'fast');
-of_args = optimget(options, 'of_args', defaultopt, 'fast');
+% if the log file does not exists or if the user decided to overwrite
+if ~isfile(file_log) || o.overwrite
 
-file_theta = [file_prefix, '_theta_samples.csv'];
-file_Qsim  = [file_prefix, '_Q_sim'];
-file_perf  = [file_prefix, '_OF_value'];
-file_log   = [file_prefix, '.mat'];
+    % create all thetas
+    simdata.theta_sample = lhs_sample_par(model,o.n);
 
-% first check if any chunk was already run (i.e. if this is a rerun
-% because the system ran out of time) and make sure the options used were
-% the same, then subtract the ones already ran to the total number of
-% repeats.
-% if this is the first time you run this, write the options used at the top
-% of the file, so that they can be checked afterwards
+    % identify the indices of the OF calculation, based on Qobs
+    [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
 
-if any(~isfile(file_log))
-    % create all thetas and save to file right away
-    theta_sample = lhs_sample_par(model,n);
-    writematrix(theta_sample', file_theta); 
-    n_done = 0;
-    last_fid = 0;
-    OF_idx = (floor(window/2)+1):step:(numel(Qobs)-floor(window/2)-1);     % this is a raw estimate, after the calculation of the OF, it will be updated
-    save(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
+    % set that none have happened yet
+    simdata.n_done = 0;
+    simdata.pc_done = 0;
+
+    % save the options and the thetas to a new log file
+    save(file_log, "o", "model", "Qobs", "simdata");
+
+% otherwise, this is a restart
 else
-    disp([file_log ' found: some options will be loaded.'])
-    load(file_log, "of_name", "window", "step", "of_args", "OF_idx", "n_done", "last_fid");
+    % warn that all options will be loaded (i.e. the ones given are all discarded).
+    disp([file_log ' found: options will be loaded.'])
+    load(file_log, "o", "model", "Qobs", "simdata");
 end
 
-% calculate the total number of chunks
-n_to_do = max(0,n-n_done);
-chunks  = round(n_to_do/c_size);  % divide it into chuncks of rougly c_size points
-n_chunk = ceil(n_to_do/chunks);  % actual number of points per chunck
-
-% for each chunk
-while chunks > 0
-    % get the thetas from the file saved before
-    range_theta = [num2str(n_done+1), ':', num2str(n_done+n_chunk)];
-    theta_sample_chunk = readmatrix(file_theta, 'Range', range_theta)';
-
-    % run the model with all of the samples created
-    Qsim_chunk = run_with_par_sample(model, theta_sample_chunk);
-
-    % calculate performance over a moving window of width window
-    [OF_idx, perf_over_time_chunk] = calc_of_moving_window(Qsim_chunk, Qobs, window, step, of_name, precision_Q+1, of_args{:});
-
-    % write both to file (appending to make sure you don't lose the values
-    % from the previous chunks), so that it can be retrieved afterwards
-    last_fid = last_fid + 1;
-    writematrix(round(Qsim_chunk, precision_Q)', [file_Qsim,'_',num2str(last_fid,'%03d' ),'.csv']);
-    writematrix(round(perf_over_time_chunk, precision_OF)', [file_perf,'_',num2str(last_fid,'%03d'),'.csv']);
-
-    chunks = chunks - 1;
-    n_done = n_done + n_chunk;
-    save(file_log, "n_done", "last_fid", "-append");
-    if chunks == 1; save(file_log, "OF_idx", "-append"); end
+if(simdata.n_done) < o.n
+    % run all the simulations, with the appropriate restarting
+    run_dynia_simulation(file_log, simdata, model, Qobs, o)
 end
 
-% after all simulations are finished; open the final files and
-% continue
-theta_sample = readmatrix(file_theta)';
-perf_ds = datastore([file_perf, '_*.csv']);
+
 
 % create empty containers for top10 performance and parameters at every
 % timestep

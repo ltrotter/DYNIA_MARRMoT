@@ -1,4 +1,4 @@
-function [idx_non_missing, of_over_time_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
+function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
 
 if isempty(precision); precision = 3; end
 [T,n] = size(Qsim);
