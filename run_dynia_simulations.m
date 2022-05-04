@@ -44,12 +44,17 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     pc_done = simdata.pc_done;
     
     if n_done == 0
-        % create a csv file for each timestep, this will be used later on.
+        % create a csv file for each timestep
+        % create the header, which is common for all files
+        flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
+        store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
+        header = [num2str(1:model.numParams, 'theta_%i,'), 'OF_value,',  flux_names{:}, store_names{:}];
+        header(end) = []; header = [header, '\n'];
         for j = 1:numel(OF_idx)
             this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.csv'];
             fileID = fopen(this_file_name,'w');
-            % write the header braket to each file, this will be helpful later
-            fprintf(fileID,'theta, OF, fluxes, stores\n');
+            % write the header braket to each file
+            fprintf(fileID, header);
             fclose(fileID);
         end
         %simdata.isfirst = ones(size(OF_idx)); % this is used to add commas between entries in the json files
@@ -88,8 +93,9 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
             % create the name and text to save as json
             this_OF_idx = OF_idx_behavioural(t);
             file_name = [o.file_prefix '_' num2str(this_OF_idx) '.csv'];
-            csv_txt = [mat2str(this_theta), ',', num2str(OF_here, o.precision_OF), ',',...
-                       mat2str(fluxes_here', o.precision_Q), ',', mat2str(stores_here', o.precision_Q),'\n'];
+            csv_txt = [num2str(this_theta', '%.9g,'), num2str(OF_here, '%g,'),...
+                       num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
+            csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
 
             % save to the csv file
             fileID = fopen(file_name,'a');
