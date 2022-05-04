@@ -18,7 +18,8 @@ if ~isfile(file_log) || o.overwrite
 
     % set that none have happened yet
     simdata.n_done = 0;
-    simdata.pc_done = 0;
+    simdata.total_time = 0;
+    simdata.chunk_time = [];
 
     % save the options and the thetas to a new log file
     save(file_log, "o", "model", "Qobs", "simdata");
@@ -41,7 +42,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     n_done = simdata.n_done;
     theta_sample = simdata.theta_sample;
     OF_idx = simdata.OF_idx;
-    pc_done = simdata.pc_done;
+    total_time = simdata.total_time;
 
     if n_done == 0
         % create a csv file for each timestep
@@ -59,6 +60,10 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         end
     end
 
+    % before we start the loop, prepare the output cell and start a timer
+    this_chunk_output = cell(numel(OF_idx),1);
+    chunk_time = tic;
+
     % loop through each set of thetas
     while n_done < o.n
         this_theta = theta_sample(:,n_done + 1);
@@ -75,6 +80,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         % check the timesteps with performance above the threshold
         behavioural_steps = perf_over_time > o.perf_thr;
         OF_idx_behavioural = OF_idx(behavioural_steps);
+        idx_behavioural = find(behavioural_steps);
 
         % extract performance, fluxes and stores at those timesteps
         OF_vals = perf_over_time(behavioural_steps);
@@ -82,41 +88,62 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         stores = calc_avg_at_timesteps(model.stores, OF_idx_behavioural, o.window);
 
         % for each of those steps
-        for t = 1:numel(OF_idx_behavioural)
-            % create a cell array containing the useful data
-            OF_here = round(OF_vals(t), o.precision_OF);
-            fluxes_here = round(fluxes(t,:), o.precision_Q);
-            stores_here = round(stores(t,:), o.precision_Q);
+        for i = 1:numel(idx_behavioural)
+            t = idx_behavioural(i);
 
-            % create the name and text to save as json
-            this_OF_idx = OF_idx_behavioural(t);
-            file_name = [o.file_prefix '_' num2str(this_OF_idx) '.csv'];
+            % get all the useful data
+            OF_here = round(OF_vals(i), o.precision_OF);
+            fluxes_here = round(fluxes(i,:), o.precision_Q);
+            stores_here = round(stores(i,:), o.precision_Q);
+
+            % create the one line string that will need to be written to
+            % file
             csv_txt = [num2str(this_theta', '%.9g,'), num2str(OF_here, '%g,'),...
                        num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
             csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
 
-            % save to the csv file
-            fileID = fopen(file_name,'a');
-            fprintf(fileID, csv_txt);
-            fclose(fileID);
+            % append it to what's already existing
+            this_chunk_output{t} = [this_chunk_output{t}, csv_txt];
         end
 
-        % increase n_done and add it to the log file
+        % increase n_done
         n_done = n_done + 1;
-        simdata.n_done = n_done;
 
-        % display progress at each full percentage points
-        if(o.display)
-            pc_done_now = n_done/o.n * 100;
-            if floor(pc_done_now) > floor(pc_done)
+        % each chunk_size simulations, save the results so far
+        if rem(n_done, o.chunk_size) == 0
+            for c=1:numel(this_chunk_output)
+                if isempty(this_chunk_output{c}); continue; end
+                % create the file name
+                file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
+                
+                % save the relevant output
+                fileID = fopen(file_name,'a');
+                fprintf(fileID, this_chunk_output{c});
+                fclose(fileID);
+            end
+
+            % empty up this_chunk_output
+            this_chunk_output = cell(numel(OF_idx),1);
+
+            % calculate time it took for this chunk
+            this_chunk_time = toc(chunk_time); chunk_time = tic;
+            total_time = total_time + this_chunk_time;
+
+            % save n_done to the log file
+            simdata.n_done = n_done;
+            simdata.chunk_time(end+1) = this_chunk_time;
+            simdata.total_time = total_time;
+            save(file_log, "simdata", "-append");
+
+            % print to screen if display is active
+            if o.display
                 msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
-                        ' (', num2str(floor(pc_done_now),'%u'), '%).'];
+                            ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
+                            'Elapsed time = ' num2str(total_time/60,'%.2f'), 'min (+',...
+                            num2str(this_chunk_time/60,'%.2f'),')'];
                 disp(msg);
             end
         end
-        pc_done = pc_done_now;
-        simdata.pc_done = pc_done;
-        save(file_log, "simdata", "-append");
     end
 end
 
@@ -153,7 +180,8 @@ function opts_out = get_dynia_options(opts_in)
                         'perf_thr', 0,...
                         'display', 1,...
                         'overwrite', 0,...
-                        'theta', []);
+                        'theta', [],...
+                        'chunk_size', 1000);
     defaultopt.of_args = cell(0);
 
     % get options
@@ -169,7 +197,7 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.display = optimget(opts_in, 'display', defaultopt, 'fast');
     opts_out.overwrite = optimget(opts_in, 'overwrite', defaultopt, 'fast');
     opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
-
+    opts_out.chunk_size = optimget(opts_in, 'chunk_size', defaultopt, 'fast');
 end
 
 function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
