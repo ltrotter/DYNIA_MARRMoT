@@ -11,7 +11,7 @@ file_log   = [o.file_prefix, '.mat'];
 if ~isfile(file_log) || o.overwrite
 
     % create all thetas
-    simdata.theta_sample = lhs_sample_par(model,o.n);
+    simdata.theta_sample = lhs_sample_par(model,o.n, o.theta);
 
     % identify the indices of the OF calculation, based on Qobs
     [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
@@ -128,11 +128,16 @@ function sample = unif_sample_par(model, n)
 
 end
 
-function sample = lhs_sample_par(model, n)
+function sample = lhs_sample_par(model, n, theta)
 
-    ranges = model.parRanges;
+    if nargin < 3 || isempty(theta); theta = NaN(model.numParams,1);end
+    sample = NaN(model.numParams,n);
+    
+
+    ranges = model.parRanges(isnan(theta),:);
     lhs = lhsdesign(n,size(ranges, 1));
-    sample = lhs'.*diff(ranges,1,2) + ranges(:,1);
+    sample(isnan(theta),:) = lhs'.*diff(ranges,1,2) + ranges(:,1);
+    sample(~isnan(theta),:) = repmat(theta(~isnan(theta)),1,n);
 
 end
 
@@ -147,7 +152,8 @@ function opts_out = get_dynia_options(opts_in)
                         'precision_OF', 4,...
                         'perf_thr', 0,...
                         'display', 1,...
-                        'overwrite', 0);
+                        'overwrite', 0,...
+                        'theta', []);
     defaultopt.of_args = cell(0);
 
     % get options
@@ -162,6 +168,7 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.perf_thr = optimget(opts_in, 'perf_thr', defaultopt, 'fast');
     opts_out.display = optimget(opts_in, 'display', defaultopt, 'fast');
     opts_out.overwrite = optimget(opts_in, 'overwrite', defaultopt, 'fast');
+    opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
 
 end
 
