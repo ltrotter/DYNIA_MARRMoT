@@ -44,17 +44,17 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     pc_done = simdata.pc_done;
     
     if n_done == 0
-        % create a json file for each timestep, this will be used later on.
+        % create a csv file for each timestep, this will be used later on.
         for j = 1:numel(OF_idx)
-            this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.json'];
+            this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.csv'];
             fileID = fopen(this_file_name,'w');
-            % write the opening braket to each file, this will be helpful later
-            fprintf(fileID,'[');
+            % write the header braket to each file, this will be helpful later
+            fprintf(fileID,'theta, OF, fluxes, stores\n');
             fclose(fileID);
         end
-        simdata.isfirst = ones(size(OF_idx)); % this is used to add commas between entries in the json files
+        %simdata.isfirst = ones(size(OF_idx)); % this is used to add commas between entries in the json files
     end
-    isfirst = simdata.isfirst;
+    %isfirst = simdata.isfirst;
     
     % loop through each set of thetas
     while n_done < o.n
@@ -80,33 +80,26 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     
         % for each of those steps
         for t = 1:numel(OF_idx_behavioural)
-            % create a struct containing the useful data
-            outstruct.theta = this_theta;
-            outstruct.OF = round(OF_vals(t), o.precision_OF);
-            outstruct.fluxes = round(fluxes(t,:), o.precision_Q);
-            outstruct.stores = round(stores(t,:), o.precision_Q);
+            % create a cell array containing the useful data
+            OF_here = round(OF_vals(t), o.precision_OF);
+            fluxes_here = round(fluxes(t,:), o.precision_Q);
+            stores_here = round(stores(t,:), o.precision_Q);
     
             % create the name and text to save as json
             this_OF_idx = OF_idx_behavioural(t);
-            file_name = [o.file_prefix '_' num2str(this_OF_idx) '.json'];
-            jsontxt = jsonencode(outstruct);
-    
-            % save to the json file
+            file_name = [o.file_prefix '_' num2str(this_OF_idx) '.csv'];
+            csv_txt = [mat2str(this_theta), ',', num2str(OF_here, o.precision_OF), ',',...
+                       mat2str(fluxes_here', o.precision_Q), ',', mat2str(stores_here', o.precision_Q),'\n'];
+
+            % save to the csv file
             fileID = fopen(file_name,'a');
-            % this if-else is because we need to add commas between each entry
-            if isfirst(OF_idx == this_OF_idx)
-                isfirst(OF_idx == this_OF_idx) = 0;
-            else
-                fprintf(fileID,',');
-            end
-            fprintf(fileID,jsontxt);
+            fprintf(fileID, csv_txt);
             fclose(fileID);
         end
     
         % increase n_done and add it to the log file
         n_done = n_done + 1;
         simdata.n_done = n_done;
-        simdata.isfirst = isfirst;
     
         % display progress at each full percentage points
         if(o.display)
@@ -120,14 +113,5 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         pc_done = pc_done_now;
         simdata.pc_done = pc_done;
         save(file_log, "simdata", "-append");
-    end
-    
-    % close the bracket for all files at the end of the operation
-    for j = 1:numel(OF_idx)
-        this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.json'];
-        fileID = fopen(this_file_name,'a');
-        % write the opening braket to each file, this will be helpful later
-        fprintf(fileID,']');
-        fclose(fileID);
     end
 end
