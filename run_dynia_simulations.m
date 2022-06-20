@@ -94,7 +94,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                     perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
             
                     % check the timesteps with performance above the threshold
-                    behavioural_steps = perf_over_time > o.perf_thr;
+                    behavioural_steps = (o.sign_bmk.*perf_over_time) > (o.sign_bmk.*o.perf_thr);
                     OF_idx_behavioural = OF_idx(behavioural_steps);
                     idx_behavioural = find(behavioural_steps);
             
@@ -179,7 +179,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
             perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
     
             % check the timesteps with performance above the threshold
-            behavioural_steps = perf_over_time > o.perf_thr;
+            behavioural_steps = (o.sign_bmk.*perf_over_time) > (o.sign_bmk.*o.perf_thr);
             OF_idx_behavioural = OF_idx(behavioural_steps);
             idx_behavioural = find(behavioural_steps);
     
@@ -284,7 +284,8 @@ function opts_out = get_dynia_options(opts_in)
                         'overwrite', 0,...
                         'theta', [],...
                         'chunk_size', 1000,...
-                        'parallelEval', 0);
+                        'parallelEval', 0, ...
+                        'signBenchmark',1);
     defaultopt.of_args = cell(0);
 
     % get options
@@ -302,6 +303,7 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
     opts_out.chunk_size = optimget(opts_in, 'chunk_size', defaultopt, 'fast');
     opts_out.parallelEval = optimget(opts_in, 'parallelEval', defaultopt, 'fast');
+    opts_out.sign_bmk = optimget(opts_in, 'signBenchmark', defaultopt, 'fast');
 end
 
 function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
