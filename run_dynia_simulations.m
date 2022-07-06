@@ -92,10 +92,10 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                      
                     % calculate performance and skill over time
                     perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
-                    skill_over_time = (perf_over_time - o.perf_thr)/(o.obj - o.perf_thr);
+                    skill_over_time = (perf_over_time - o.perf_thr)./(o.obj - o.perf_thr);
             
                     % check the timesteps with skill above 0 - buffer
-                    behavioural_steps = skill_over_time > 0-buffer;
+                    behavioural_steps = skill_over_time > 0-o.buffer;
                     OF_idx_behavioural = OF_idx(behavioural_steps);
                     idx_behavioural = find(behavioural_steps);
             
@@ -181,10 +181,10 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
 
             % calculate performance and skill over time
             perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
-            skill_over_time = (perf_over_time - o.perf_thr)/(o.obj - o.perf_thr);
+            skill_over_time = (perf_over_time - o.perf_thr)./(o.obj - o.perf_thr);
     
             % check the timesteps with skill above 0 - buffer
-            behavioural_steps = skill_over_time > 0-buffer;
+            behavioural_steps = skill_over_time > 0-o.buffer;
             OF_idx_behavioural = OF_idx(behavioural_steps);
             idx_behavioural = find(behavioural_steps);
     
