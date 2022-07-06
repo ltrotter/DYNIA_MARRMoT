@@ -49,7 +49,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         % create the header, which is common for all files
         flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
         store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
-        header = [num2str(1:model.numParams, 'theta_%i,'), 'OF_value,',  flux_names{:}, store_names{:}];
+        header = [num2str(1:model.numParams, 'theta_%i,'), 'OF_value,Skill_score,',  flux_names{:}, store_names{:}];
         header(end) = []; header = [header, '\n'];
         for j = 1:numel(OF_idx)
             this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.csv'];
@@ -90,16 +90,18 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                     % get the streamflow
                     Qsim = model.get_streamflow();
                      
-                    % calculate performance over time
+                    % calculate performance and skill over time
                     perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
+                    skill_over_time = (perf_over_time - o.perf_thr)/(o.obj - o.perf_thr);
             
-                    % check the timesteps with performance above the threshold
-                    behavioural_steps = (o.sign_bmk.*perf_over_time) > (o.sign_bmk.*o.perf_thr);
+                    % check the timesteps with skill above 0 - buffer
+                    behavioural_steps = skill_over_time > 0-buffer;
                     OF_idx_behavioural = OF_idx(behavioural_steps);
                     idx_behavioural = find(behavioural_steps);
             
-                    % extract performance, fluxes and stores at those timesteps
+                    % extract performance, skill, fluxes and stores at those timesteps
                     OF_vals = perf_over_time(behavioural_steps);
+                    skill   = skill_over_time(behavioural_steps);
                     fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_behavioural, o.window);
                     stores = calc_avg_at_timesteps(model.stores, OF_idx_behavioural, o.window);
         
@@ -109,12 +111,14 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
             
                         % get all the useful data
                         OF_here = round(OF_vals(i), o.precision_OF);
+                        skill_here = round(skill(i), o.precision_OF);
                         fluxes_here = round(fluxes(i,:), o.precision_Q);
                         stores_here = round(stores(i,:), o.precision_Q);
             
                         % create the one line string that will need to be written to
                         % file
-                        csv_txt = [num2str(this_theta', '%.9g,'), num2str(OF_here, '%g,'),...
+                        csv_txt = [num2str(this_theta', '%.9g,'),...
+                                   num2str(OF_here, '%g,'), num2str(skill_here, '%g,'),...
                                    num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
                         csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
             
@@ -174,17 +178,19 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     
             % get the streamflow
             Qsim = model.get_streamflow();
-    
-            % calculate performance over time
+
+            % calculate performance and skill over time
             perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
+            skill_over_time = (perf_over_time - o.perf_thr)/(o.obj - o.perf_thr);
     
-            % check the timesteps with performance above the threshold
-            behavioural_steps = (o.sign_bmk.*perf_over_time) > (o.sign_bmk.*o.perf_thr);
+            % check the timesteps with skill above 0 - buffer
+            behavioural_steps = skill_over_time > 0-buffer;
             OF_idx_behavioural = OF_idx(behavioural_steps);
             idx_behavioural = find(behavioural_steps);
     
-            % extract performance, fluxes and stores at those timesteps
+            % extract performance, skill, fluxes and stores at those timesteps
             OF_vals = perf_over_time(behavioural_steps);
+            skill   = skill_over_time(behavioural_steps);
             fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_behavioural, o.window);
             stores = calc_avg_at_timesteps(model.stores, OF_idx_behavioural, o.window);
     
@@ -194,12 +200,14 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     
                 % get all the useful data
                 OF_here = round(OF_vals(i), o.precision_OF);
+                skill_here = round(skill(i), o.precision_OF);
                 fluxes_here = round(fluxes(i,:), o.precision_Q);
                 stores_here = round(stores(i,:), o.precision_Q);
     
                 % create the one line string that will need to be written to
                 % file
-                csv_txt = [num2str(this_theta', '%.9g,'), num2str(OF_here, '%g,'),...
+                csv_txt = [num2str(this_theta', '%.9g,'),...
+                           num2str(OF_here, '%g,'), num2str(skill_here, '%g,'),...
                            num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
                 csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
     
@@ -285,7 +293,8 @@ function opts_out = get_dynia_options(opts_in)
                         'theta', [],...
                         'chunk_size', 1000,...
                         'parallelEval', 0, ...
-                        'signBenchmark',1);
+                        'objective',0,...
+                        'skill_score_buffer', .25);
     defaultopt.of_args = cell(0);
 
     % get options
@@ -303,7 +312,9 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
     opts_out.chunk_size = optimget(opts_in, 'chunk_size', defaultopt, 'fast');
     opts_out.parallelEval = optimget(opts_in, 'parallelEval', defaultopt, 'fast');
-    opts_out.sign_bmk = optimget(opts_in, 'signBenchmark', defaultopt, 'fast');
+    opts_out.obj = optimget(opts_in, 'objective', defaultopt, 'fast');
+    opts_out.buffer = optimget(opts_in, 'skill_score_buffer', defaultopt, 'fast');
+
 end
 
 function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
