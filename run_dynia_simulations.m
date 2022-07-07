@@ -17,7 +17,8 @@ if ~isfile(file_log) || o.overwrite
     [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
 
     % set that none have happened yet
-    simdata.n_done = 0;
+    %simdata.n_done = 0;
+    simdata.done = zeros(1,o.n);
     simdata.total_time = 0;
     simdata.chunk_time = [];
 
@@ -29,9 +30,23 @@ else
     % warn that all options will be loaded (i.e. the ones given are all discarded).
     disp([file_log ' found: options will be loaded.'])
     load(file_log, "o", "model", "Qobs", "simdata");
+
+    % check if there was any tmp file with leftover done simulation that
+    % weren't saved to the log file (because the simulation eneded before
+    % all workers were done)
+    tmp_files = dir([o.file_prefix '_tmp*.mat']);
+    n_files = size(tmp_files,1);
+    if n_files > 0
+        for f=1:n_files
+            this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
+            this_done_ids = load(this_tmp_file);
+            simdata.done(this_done_ids.done_ids) = 1;
+            delete(this_tmp_file)
+        end
+    end
 end
 
-if simdata.n_done < o.n
+if any(~simdata.done)
     % run all the simulations, with the appropriate restarting
     helper_sim_function(file_log, simdata, model, Qobs, o)
 end
@@ -39,12 +54,11 @@ end
 
 function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
 
-    n_done = simdata.n_done;
     theta_sample = simdata.theta_sample;
     OF_idx = simdata.OF_idx;
     total_time = simdata.total_time;
 
-    if n_done == 0
+    if all(~simdata.done)
         % create a csv file for each timestep
         % create the header, which is common for all files
         flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
@@ -64,22 +78,19 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         poolobj = gcp('nocreate');
         if isempty(poolobj); poolobj = parpool; end
         workers = poolobj.NumWorkers;
-        while n_done < o.n
-            n_to_do = o.n - n_done;
+
+        while any(~simdata.done)
+            ids_to_do = find(~simdata.done);
+            n_to_do = sum(~simdata.done);
             if n_to_do < workers * o.chunk_size
                 o.chunk_size = ceil(n_to_do/workers);
             end
             spmd_start = tic;
             spmd
-%                 this_worker_data = load([o.file_prefix 'workers_data.mat']);
-%                 OF_idx = this_worker_data.OF_idx;
-%                 model = this_worker_data.model;
-%                 numel_OF_idx = this_worker_data.numel_OF_idx;
-%                 Qobs = this_worker_data.Qobs;
-%                 o = this_worker_data.o;
-                this_start_i = n_done + 1 + (labindex-1)*o.chunk_size;
-                this_end_i = min(this_start_i + o.chunk_size - 1, size(theta_sample,2));
-                this_theta_sample = theta_sample(:,this_start_i:this_end_i);
+                this_start_i = 1 + (labindex-1)*o.chunk_size;
+                this_end_i = min(this_start_i + o.chunk_size - 1, size(ids_to_do,2));
+                this_theta_ids = ids_to_do(this_start_i:this_end_i);
+                this_theta_sample = theta_sample(:,this_theta_ids);
                 this_output = cell(numel(OF_idx),1);
                 for j=1:size(this_theta_sample,2)
                     this_theta = this_theta_sample(:,j);
@@ -139,21 +150,31 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                     fclose(fileID);
                 end
                 
-                done_these_chunks = j;
+                tmp_file = [o.file_prefix '_tmp' num2str(labindex) '.mat'];
+                save_tmp_done(tmp_file, this_theta_ids)
+
             end
-            n_done = n_done + sum([done_these_chunks{:}]);
 
             % calculate time it took for this chunk
             these_chunks_time = toc(spmd_start);
             total_time = total_time + these_chunks_time;
-        
+
+            % update simdata.done from the tmp files
+            tmp_files = dir([o.file_prefix '_tmp*.mat']);
+            n_files = size(tmp_files,1);
+            for f=1:n_files
+                this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
+                this_done_ids = load(this_tmp_file);
+                simdata.done(this_done_ids.done_ids) = 1;
+                delete(this_tmp_file)
+            end
             % save n_done to the log file
-            simdata.n_done = n_done;
             simdata.chunk_time(end+1) = these_chunks_time;
             simdata.total_time = total_time;
             save(file_log, "simdata", "-append");
-        
+            
             % print to screen if display is active
+            n_done = sum(simdata.done);
             if o.display
                 msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
                             ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
@@ -170,8 +191,9 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
         chunk_time = tic;
     
         % loop through each set of thetas
-        while n_done < o.n
-            this_theta = theta_sample(:,n_done + 1);
+        while any(~simdata.done)
+            this_theta_id = find(~simdata.done, 1, 'first');
+            this_theta = theta_sample(:,this_theta_id);
     
             % run the model with this parameter set
             model.theta = this_theta; model.run();
@@ -215,8 +237,9 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                 this_chunk_output{t} = [this_chunk_output{t}, csv_txt];
             end
     
-            % increase n_done
-            n_done = n_done + 1;
+            % update the list of done sets
+            simdata.done(this_theta_id) = 1;
+            n_done = sum(simdata.done);
     
             % each chunk_size simulations, save the results so far
             if rem(n_done, o.chunk_size) == 0
@@ -239,7 +262,6 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                 total_time = total_time + this_chunk_time;
     
                 % save n_done to the log file
-                simdata.n_done = n_done;
                 simdata.chunk_time(end+1) = this_chunk_time;
                 simdata.total_time = total_time;
                 save(file_log, "simdata", "-append");
@@ -354,4 +376,8 @@ function [average_at_timesteps] = calc_avg_at_timesteps(data, timesteps, window)
         average_at_timesteps(i,:) = mean(data(t-half_window:t+half_window,:),1);
     end
 
+end
+
+function [] = save_tmp_done(tmp_file, done_ids)
+    save(tmp_file, "done_ids");
 end
