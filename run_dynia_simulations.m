@@ -39,8 +39,21 @@ else
     if n_files > 0
         for f=1:n_files
             this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
-            this_done_ids = load(this_tmp_file);
-            simdata.done(this_done_ids.done_ids) = 1;
+            this_tmp_output = load(this_tmp_file);
+
+            this_output_txt = this_tmp_output.output;
+            for c=1:numel(this_output_txt)
+                if isempty(this_output_txt{c}); continue; end
+                % create the file name
+                file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
+                
+                % save the relevant output
+                fileID = fopen(file_name,'a');
+                fprintf(fileID, this_output_txt{c});
+                fclose(fileID);
+            end
+
+            simdata.done(this_tmp_output.done_ids) = 1;
             delete(this_tmp_file)
         end
     end
@@ -138,36 +151,37 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
                     end
                 end
                 
-                % write outputs of all timesteps to file, after the end of the loop
-                for c=1:numel(this_output)
-                    if isempty(this_output{c}); continue; end
-                    % create the file name
-                    file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
-                    
-                    % save the relevant output
-                    fileID = fopen(file_name,'a');
-                    fprintf(fileID, this_output{c});
-                    fclose(fileID);
-                end
-                
                 tmp_file = [o.file_prefix '_tmp' num2str(labindex) '.mat'];
-                save_tmp_done(tmp_file, this_theta_ids)
-
+                save_tmp_data(tmp_file, this_theta_ids, this_output)
             end
 
             % calculate time it took for this chunk
             these_chunks_time = toc(spmd_start);
             total_time = total_time + these_chunks_time;
 
-            % update simdata.done from the tmp files
+            % update csv files with results and simdata.done from the tmp files
             tmp_files = dir([o.file_prefix '_tmp*.mat']);
             n_files = size(tmp_files,1);
             for f=1:n_files
                 this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
-                this_done_ids = load(this_tmp_file);
-                simdata.done(this_done_ids.done_ids) = 1;
+                this_tmp_output = load(this_tmp_file);
+
+                this_output_txt = this_tmp_output.output;
+                for c=1:numel(this_output_txt)
+                    if isempty(this_output_txt{c}); continue; end
+                    % create the file name
+                    file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
+                    
+                    % save the relevant output
+                    fileID = fopen(file_name,'a');
+                    fprintf(fileID, this_output_txt{c});
+                    fclose(fileID);
+                end
+
+                simdata.done(this_tmp_output.done_ids) = 1;
                 delete(this_tmp_file)
             end
+
             % save n_done to the log file
             simdata.chunk_time(end+1) = these_chunks_time;
             simdata.total_time = total_time;
@@ -378,6 +392,6 @@ function [average_at_timesteps] = calc_avg_at_timesteps(data, timesteps, window)
 
 end
 
-function [] = save_tmp_done(tmp_file, done_ids)
-    save(tmp_file, "done_ids");
+function [] = save_tmp_data(tmp_file, done_ids, output)
+    save(tmp_file, "done_ids", "output");
 end
