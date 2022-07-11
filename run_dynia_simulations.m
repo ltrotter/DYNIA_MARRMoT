@@ -33,10 +33,21 @@ else
 end
 
 if any(~simdata.done)
-    if o.parallelEval == 0
-        % run all the simulations, with the appropriate restarting
-        helper_sim_function(file_log, simdata, model, Qobs, o)
-    else 
+    % prepare output (i.e. list of 10% of best performing sets for each ts)
+    n_to_keep       = ceil(o.n * o.pc_top);
+    top_performance = o.sign * inf(n_to_keep, numel(simdata.OF_idx));
+    while any(~simdata.done)
+        % run a single chunk
+        chunk_time = tic;
+        [top_perf, output, simdata] = ...
+            run_chunk_simulations(simdata, top_performance, model, Qobs, o);
+        top_performance = top_perf.perf;
+        save_chunk_data(output, top_perf, o, simdata.OF_idx)
+        simdata.chunk_time(end+1) = toc(chunk_time);
+        simdata.total_time = sum(simdata.chunk_time);
+        if o.display; print_summary(simdata, o); end
+    end
+
 
     % create the header, which is common for all files
     flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
@@ -64,31 +75,26 @@ if any(~simdata.done)
 end
 end
 
-function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
+function [top_perf, output, simdata] = ...
+    run_chunk_simulations(simdata, top_performance, model, Qobs, o)
 
     theta_sample = simdata.theta_sample;
     OF_idx = simdata.OF_idx;
-    total_time = simdata.total_time;
-    
-    % prepare output (i.e. list of 10% of best performing sets for each ts)
-    n_to_keep       = ceil(o.n * o.pc_top);
-    top_performance = o.sign * inf(n_to_keep, numel(simdata.OF_idx));
     
     all_performance = zeros(o.n, numel(OF_idx));
 
     if all(~simdata.done)
         % create a new mat file for each timestep to store the top 10% of
         % simulation results
-        output = cell(n_to_keep, 1);
+        output = cell(size(top_performance, 1), 1);
         for j = 1:numel(OF_idx)
             this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.mat'];
             save(this_file_name, 'output')
         end
     end
 
-    % before we start the loop, prepare the output cell and start a timer
+    % before we start the loop, prepare the output cell
     this_chunk_output = cell(o.chunk_size,numel(OF_idx));
-    chunk_time = tic;
 
     % set that this is a new chunk
     chunk_id = 0;
@@ -96,7 +102,7 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     where_top_performance = zeros(size(top_performance));
 
     % loop through each set of thetas
-    while any(~simdata.done); chunk_id = chunk_id +1;
+    while chunk_id < o.chunk_size && any(~simdata.done); chunk_id = chunk_id +1;
         % get the first undone parameter set
         this_theta_id = find(~simdata.done, 1, 'first');
         this_theta = theta_sample(:,this_theta_id);
@@ -155,61 +161,52 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
             % append it to what's already existing
             this_chunk_output{chunk_id, t} = csv_txt;
         end
-
-        % update the list of done sets
         simdata.done(this_theta_id) = 1;
-        n_done = sum(simdata.done);
-
-        % each chunk_size simulations, save the results so far
-        if chunk_id == o.chunk_size || all(simdata.done)
-            % for each timestep
-            for i=1:size(this_chunk_output, 2)
-                if(all(where_top_performance(:,i)==0));continue;end
-                t = OF_idx(i); %get the timestep number
-
-                % load the existing results
-                this_t_filename = [o.file_prefix, '_', num2str(t)];
-                load(this_t_filename, 'output');
-                old_output = output;
-                
-                % build the new output
-                output_new = old_output; % start with the existing values
-                to_change = where_top_performance(:,i) ~= 0; % where the top performance values are in this chunk
-                to_change_with = where_top_performance(to_change, i); % find the output string to substitute in
-                output_new(to_change) = this_chunk_output(to_change_with, i); % do the substitution
-
-                % save to the file
-                output = output_new;
-                save(this_t_filename, 'output');
-            end
-
-            % empty up this_chunk_output
-            this_chunk_output = cell(o.chunk_size,numel(OF_idx));
-
-            % set that this is a new chunk
-            chunk_id = 0;
-            % and all top performance values belong to the previous chunks.
-            where_top_performance = zeros(size(top_performance));
-
-            % calculate time it took for this chunk
-            this_chunk_time = toc(chunk_time); chunk_time = tic;
-            total_time = total_time + this_chunk_time;
-
-            % save n_done to the log file
-            simdata.chunk_time(end+1) = this_chunk_time;
-            simdata.total_time = total_time;
-            save(file_log, "simdata", "-append");
-
-            % print to screen if display is active
-            if o.display
-                msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
-                            ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
-                            'Elapsed time = ' num2str(total_time/60,'%.2f'), 'min (+',...
-                            num2str(this_chunk_time/60,'%.2f'),')'];
-                disp(msg);
-            end
-        end
     end
+
+    % format output
+    top_perf.perf = top_performance;
+    top_perf.idx = where_top_performance;
+    output = this_chunk_output;
+end
+
+function [] = save_chunk_data(chunk_output, top_perf, o, OF_idx)
+
+    where_top_performance = top_perf.idx;
+
+    % for each timestep
+    for i=1:size(chunk_output, 2)
+        if(all(where_top_performance(:,i)==0));continue;end
+        t = OF_idx(i); %get the timestep number
+
+        % load the existing results
+        this_t_filename = [o.file_prefix, '_', num2str(t)];
+        load(this_t_filename, 'output');
+        old_output = output;
+        
+        % build the new output
+        output_new = old_output; % start with the existing values
+        to_change = where_top_performance(:,i) ~= 0; % where the top performance values are in this chunk
+        to_change_with = where_top_performance(to_change, i); % find the output string to substitute in
+        output_new(to_change) = chunk_output(to_change_with, i); % do the substitution
+
+        % save to the file
+        output = output_new;
+        save(this_t_filename, 'output');
+    end
+end
+
+function [] = print_summary(simdata, o)
+    
+    n_done = sum(simdata.done);
+    total_time = simdata.total_time;
+    last_chunk_time = simdata.chunk_time(end);
+    msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
+                ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
+                'Elapsed time = ' num2str(total_time/60,'%.2f'), 'min (+',...
+                num2str(last_chunk_time/60,'%.2f'),')'];
+    disp(msg);
+
 end
 
 function sample = unif_sample_par(model, n)
