@@ -11,7 +11,7 @@ file_log   = [o.file_prefix, '.mat'];
 if ~isfile(file_log) || o.overwrite
 
     % create all thetas
-    simdata.theta_sample = lhs_sample_par(model,o.n, o.theta);
+    simdata.theta_sample = lhs_sample_par(model,o.n, o.theta, 1234);
 
     % identify the indices of the OF calculation, based on Qobs
     [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
@@ -30,38 +30,37 @@ else
     % warn that all options will be loaded (i.e. the ones given are all discarded).
     disp([file_log ' found: options will be loaded.'])
     load(file_log, "o", "model", "Qobs", "simdata");
-
-    % check if there was any tmp file with leftover done simulation that
-    % weren't saved to the log file (because the simulation eneded before
-    % all workers were done)
-    tmp_files = dir([o.file_prefix '_tmp*.mat']);
-    n_files = size(tmp_files,1);
-    if n_files > 0
-        for f=1:n_files
-            this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
-            this_tmp_output = load(this_tmp_file);
-
-            this_output_txt = this_tmp_output.output;
-            for c=1:numel(this_output_txt)
-                if isempty(this_output_txt{c}); continue; end
-                % create the file name
-                file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
-                
-                % save the relevant output
-                fileID = fopen(file_name,'a');
-                fprintf(fileID, this_output_txt{c});
-                fclose(fileID);
-            end
-
-            simdata.done(this_tmp_output.done_ids) = 1;
-            delete(this_tmp_file)
-        end
-    end
 end
 
 if any(~simdata.done)
-    % run all the simulations, with the appropriate restarting
-    helper_sim_function(file_log, simdata, model, Qobs, o)
+    if o.parallelEval == 0
+        % run all the simulations, with the appropriate restarting
+        helper_sim_function(file_log, simdata, model, Qobs, o)
+    else 
+
+    % create the header, which is common for all files
+    flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
+    store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
+    header = ['OF_value,',  num2str(1:model.numParams, 'theta_%i,'),flux_names{:}, store_names{:}];
+    header(end) = []; header = [header, '\n'];
+    for i=1:numel(simdata.OF_idx)
+        t = simdata.OF_idx(i);
+        this_file = [o.file_prefix, '_', num2str(t)];
+        load(this_file, 'output');
+
+        csv_file = [this_file, '.csv'];
+        fileID = fopen(csv_file,'w');
+        % write the header to each file
+        fprintf(fileID, header);
+
+        % write the output under the header for each file
+        cellfun(@(out) fprintf(fileID, [out, '\n']), output);
+        fclose(fileID);
+
+        % delete the .mat file
+        delete([this_file, '.mat']);
+    end
+
 end
 end
 
@@ -70,224 +69,144 @@ function [] = helper_sim_function(file_log, simdata, model, Qobs, o)
     theta_sample = simdata.theta_sample;
     OF_idx = simdata.OF_idx;
     total_time = simdata.total_time;
+    
+    % prepare output (i.e. list of 10% of best performing sets for each ts)
+    n_to_keep       = ceil(o.n * o.pc_top);
+    top_performance = o.sign * inf(n_to_keep, numel(simdata.OF_idx));
+    
+    all_performance = zeros(o.n, numel(OF_idx));
 
     if all(~simdata.done)
-        % create a csv file for each timestep
-        % create the header, which is common for all files
-        flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
-        store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
-        header = [num2str(1:model.numParams, 'theta_%i,'), 'OF_value,Skill_score,',  flux_names{:}, store_names{:}];
-        header(end) = []; header = [header, '\n'];
+        % create a new mat file for each timestep to store the top 10% of
+        % simulation results
+        output = cell(n_to_keep, 1);
         for j = 1:numel(OF_idx)
-            this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.csv'];
-            fileID = fopen(this_file_name,'w');
-            % write the header braket to each file
-            fprintf(fileID, header);
-            fclose(fileID);
+            this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.mat'];
+            save(this_file_name, 'output')
         end
     end
 
-    if o.parallelEval == 1 %parallel evaluation
-        poolobj = gcp('nocreate');
-        if isempty(poolobj); poolobj = parpool; end
-        workers = poolobj.NumWorkers;
+    % before we start the loop, prepare the output cell and start a timer
+    this_chunk_output = cell(o.chunk_size,numel(OF_idx));
+    chunk_time = tic;
 
-        while any(~simdata.done)
-            ids_to_do = find(~simdata.done);
-            n_to_do = sum(~simdata.done);
-            if n_to_do < workers * o.chunk_size
-                o.chunk_size = ceil(n_to_do/workers);
-            end
-            spmd_start = tic;
-            spmd
-                this_start_i = 1 + (labindex-1)*o.chunk_size;
-                this_end_i = min(this_start_i + o.chunk_size - 1, size(ids_to_do,2));
-                this_theta_ids = ids_to_do(this_start_i:this_end_i);
-                this_theta_sample = theta_sample(:,this_theta_ids);
-                this_output = cell(numel(OF_idx),1);
-                for j=1:size(this_theta_sample,2)
-                    this_theta = this_theta_sample(:,j);
-        
-                    % run the model with this parameter set
-                    model.theta = this_theta; model.run();
+    % set that this is a new chunk
+    chunk_id = 0;
+    % and all top performance values belong to the previous chunks.
+    where_top_performance = zeros(size(top_performance));
+
+    % loop through each set of thetas
+    while any(~simdata.done); chunk_id = chunk_id +1;
+        % get the first undone parameter set
+        this_theta_id = find(~simdata.done, 1, 'first');
+        this_theta = theta_sample(:,this_theta_id);
+
+        % run the model with this parameter set
+        model.theta = this_theta; model.run();
+
+        % get the streamflow
+        Qsim = model.get_streamflow();
+
+        % calculate performance over time
+        perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
+        all_performance(this_theta_id, :) = perf_over_time;
+
+        % check the steps where the new performance is better than the
+        % worst one in the top 10%
+        [worst_top_performance, subs] = (max(top_performance*o.sign, [], 1));
+        steps_to_keep  = perf_over_time * o.sign < worst_top_performance';
+
+        % this is all needed to do the substitutions into
+        % 'top_performance'
+        [a,b] = size(top_performance);
+        subs_real_tmp = (((a * (1:b)) - a) + subs);
+        subs_real = subs_real_tmp(steps_to_keep);
+
+        % update the top performance for the next step, so that we
+        % don't do unnecessary calculations in case this one is better
+        % than the next theta
+        OF_vals = perf_over_time(steps_to_keep);
+        top_performance(subs_real) = OF_vals;
+        where_top_performance(subs_real) = chunk_id; %this tells us where the value of top_performance is found (0=previous chunk)
+
+        % get values of stores and fluxes foe each of the ones that
+        % needs keeping
+        OF_idx_to_keep = OF_idx(steps_to_keep);
+        fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_to_keep, o.window);
+        stores = calc_avg_at_timesteps(model.stores, OF_idx_to_keep, o.window);
+
+        % for each of those steps
+        for i = 1:numel(OF_idx_to_keep)
+            tmp = find(steps_to_keep);
+            t = tmp(i);
+
+            % get all the useful data
+            OF_here = round(OF_vals(i), o.precision_OF);
+            fluxes_here = round(fluxes(i,:), o.precision_Q);
+            stores_here = round(stores(i,:), o.precision_Q);
+
+            % create the one line string that will need to be written to
+            % file
+            csv_txt = [num2str(OF_here, '%g,'),...
+                       num2str(this_theta', '%.9g,'),...
+                       num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
+            csv_txt(end) = [];% csv_txt = [csv_txt, '\n'];
+
+            % append it to what's already existing
+            this_chunk_output{chunk_id, t} = csv_txt;
+        end
+
+        % update the list of done sets
+        simdata.done(this_theta_id) = 1;
+        n_done = sum(simdata.done);
+
+        % each chunk_size simulations, save the results so far
+        if chunk_id == o.chunk_size || all(simdata.done)
+            % for each timestep
+            for i=1:size(this_chunk_output, 2)
+                if(all(where_top_performance(:,i)==0));continue;end
+                t = OF_idx(i); %get the timestep number
+
+                % load the existing results
+                this_t_filename = [o.file_prefix, '_', num2str(t)];
+                load(this_t_filename, 'output');
+                old_output = output;
                 
-                    % get the streamflow
-                    Qsim = model.get_streamflow();
-                     
-                    % calculate performance and skill over time
-                    perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
-                    skill_over_time = (perf_over_time - o.perf_thr)./(o.obj - o.perf_thr);
-            
-                    % check the timesteps with skill above 0 - buffer
-                    behavioural_steps = skill_over_time > 0-o.buffer;
-                    OF_idx_behavioural = OF_idx(behavioural_steps);
-                    idx_behavioural = find(behavioural_steps);
-            
-                    % extract performance, skill, fluxes and stores at those timesteps
-                    OF_vals = perf_over_time(behavioural_steps);
-                    skill   = skill_over_time(behavioural_steps);
-                    fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_behavioural, o.window);
-                    stores = calc_avg_at_timesteps(model.stores, OF_idx_behavioural, o.window);
-        
-                    % for each of those steps
-                    for i = 1:numel(idx_behavioural)
-                        t = idx_behavioural(i);
-            
-                        % get all the useful data
-                        OF_here = round(OF_vals(i), o.precision_OF);
-                        skill_here = round(skill(i), o.precision_OF);
-                        fluxes_here = round(fluxes(i,:), o.precision_Q);
-                        stores_here = round(stores(i,:), o.precision_Q);
-            
-                        % create the one line string that will need to be written to
-                        % file
-                        csv_txt = [num2str(this_theta', '%.9g,'),...
-                                   num2str(OF_here, '%g,'), num2str(skill_here, '%g,'),...
-                                   num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
-                        csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
-            
-                        % append it to what's already existing
-                        this_output{t} = [this_output{t}, csv_txt];
-                    end
-                end
-                
-                tmp_file = [o.file_prefix '_tmp' num2str(labindex) '.mat'];
-                save_tmp_data(tmp_file, this_theta_ids, this_output)
+                % build the new output
+                output_new = old_output; % start with the existing values
+                to_change = where_top_performance(:,i) ~= 0; % where the top performance values are in this chunk
+                to_change_with = where_top_performance(to_change, i); % find the output string to substitute in
+                output_new(to_change) = this_chunk_output(to_change_with, i); % do the substitution
+
+                % save to the file
+                output = output_new;
+                save(this_t_filename, 'output');
             end
+
+            % empty up this_chunk_output
+            this_chunk_output = cell(o.chunk_size,numel(OF_idx));
+
+            % set that this is a new chunk
+            chunk_id = 0;
+            % and all top performance values belong to the previous chunks.
+            where_top_performance = zeros(size(top_performance));
 
             % calculate time it took for this chunk
-            these_chunks_time = toc(spmd_start);
-            total_time = total_time + these_chunks_time;
-
-            % update csv files with results and simdata.done from the tmp files
-            tmp_files = dir([o.file_prefix '_tmp*.mat']);
-            n_files = size(tmp_files,1);
-            for f=1:n_files
-                this_tmp_file = [tmp_files(f).folder, '/', tmp_files(f).name];
-                this_tmp_output = load(this_tmp_file);
-
-                this_output_txt = this_tmp_output.output;
-                for c=1:numel(this_output_txt)
-                    if isempty(this_output_txt{c}); continue; end
-                    % create the file name
-                    file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
-                    
-                    % save the relevant output
-                    fileID = fopen(file_name,'a');
-                    fprintf(fileID, this_output_txt{c});
-                    fclose(fileID);
-                end
-
-                simdata.done(this_tmp_output.done_ids) = 1;
-                delete(this_tmp_file)
-            end
+            this_chunk_time = toc(chunk_time); chunk_time = tic;
+            total_time = total_time + this_chunk_time;
 
             % save n_done to the log file
-            simdata.chunk_time(end+1) = these_chunks_time;
+            simdata.chunk_time(end+1) = this_chunk_time;
             simdata.total_time = total_time;
             save(file_log, "simdata", "-append");
-            
+
             % print to screen if display is active
-            n_done = sum(simdata.done);
             if o.display
                 msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
                             ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
                             'Elapsed time = ' num2str(total_time/60,'%.2f'), 'min (+',...
-                            num2str(these_chunks_time/60,'%.2f'),')'];
+                            num2str(this_chunk_time/60,'%.2f'),')'];
                 disp(msg);
-            end
-        end
-        delete(poolobj)
-
-    else % series evaluation
-        % before we start the loop, prepare the output cell and start a timer
-        this_chunk_output = cell(numel(OF_idx),1);
-        chunk_time = tic;
-    
-        % loop through each set of thetas
-        while any(~simdata.done)
-            this_theta_id = find(~simdata.done, 1, 'first');
-            this_theta = theta_sample(:,this_theta_id);
-    
-            % run the model with this parameter set
-            model.theta = this_theta; model.run();
-    
-            % get the streamflow
-            Qsim = model.get_streamflow();
-
-            % calculate performance and skill over time
-            perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
-            skill_over_time = (perf_over_time - o.perf_thr)./(o.obj - o.perf_thr);
-    
-            % check the timesteps with skill above 0 - buffer
-            behavioural_steps = skill_over_time > 0-o.buffer;
-            OF_idx_behavioural = OF_idx(behavioural_steps);
-            idx_behavioural = find(behavioural_steps);
-    
-            % extract performance, skill, fluxes and stores at those timesteps
-            OF_vals = perf_over_time(behavioural_steps);
-            skill   = skill_over_time(behavioural_steps);
-            fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_behavioural, o.window);
-            stores = calc_avg_at_timesteps(model.stores, OF_idx_behavioural, o.window);
-    
-            % for each of those steps
-            for i = 1:numel(idx_behavioural)
-                t = idx_behavioural(i);
-    
-                % get all the useful data
-                OF_here = round(OF_vals(i), o.precision_OF);
-                skill_here = round(skill(i), o.precision_OF);
-                fluxes_here = round(fluxes(i,:), o.precision_Q);
-                stores_here = round(stores(i,:), o.precision_Q);
-    
-                % create the one line string that will need to be written to
-                % file
-                csv_txt = [num2str(this_theta', '%.9g,'),...
-                           num2str(OF_here, '%g,'), num2str(skill_here, '%g,'),...
-                           num2str(fluxes_here, '%g,'),  num2str(stores_here, '%g,')];
-                csv_txt(end) = []; csv_txt = [csv_txt, '\n'];
-    
-                % append it to what's already existing
-                this_chunk_output{t} = [this_chunk_output{t}, csv_txt];
-            end
-    
-            % update the list of done sets
-            simdata.done(this_theta_id) = 1;
-            n_done = sum(simdata.done);
-    
-            % each chunk_size simulations, save the results so far
-            if rem(n_done, o.chunk_size) == 0
-                for c=1:numel(this_chunk_output)
-                    if isempty(this_chunk_output{c}); continue; end
-                    % create the file name
-                    file_name = [o.file_prefix '_' num2str(OF_idx(c)) '.csv'];
-                    
-                    % save the relevant output
-                    fileID = fopen(file_name,'a');
-                    fprintf(fileID, this_chunk_output{c});
-                    fclose(fileID);
-                end
-    
-                % empty up this_chunk_output
-                this_chunk_output = cell(numel(OF_idx),1);
-    
-                % calculate time it took for this chunk
-                this_chunk_time = toc(chunk_time); chunk_time = tic;
-                total_time = total_time + this_chunk_time;
-    
-                % save n_done to the log file
-                simdata.chunk_time(end+1) = this_chunk_time;
-                simdata.total_time = total_time;
-                save(file_log, "simdata", "-append");
-    
-                % print to screen if display is active
-                if o.display
-                    msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
-                                ' (', num2str(n_done/o.n*100,'%.2f'), '%) - ',...
-                                'Elapsed time = ' num2str(total_time/60,'%.2f'), 'min (+',...
-                                num2str(this_chunk_time/60,'%.2f'),')'];
-                    disp(msg);
-                end
             end
         end
     end
@@ -301,12 +220,13 @@ function sample = unif_sample_par(model, n)
 
 end
 
-function sample = lhs_sample_par(model, n, theta)
+function sample = lhs_sample_par(model, n, theta, seed)
+
+    if nargin == 4 || ~isempty(seed); rng(seed); end
 
     if nargin < 3 || isempty(theta); theta = NaN(model.numParams,1);end
     sample = NaN(model.numParams,n);
     
-
     ranges = model.parRanges(isnan(theta),:);
     lhs = lhsdesign(n,size(ranges, 1));
     sample(isnan(theta),:) = lhs'.*diff(ranges,1,2) + ranges(:,1);
@@ -329,8 +249,8 @@ function opts_out = get_dynia_options(opts_in)
                         'theta', [],...
                         'chunk_size', 1000,...
                         'parallelEval', 0, ...
-                        'objective',0,...
-                        'skill_score_buffer', .25);
+                        'OF_sign',-1,...
+                        'pc_top_performance', .1);
     defaultopt.of_args = cell(0);
 
     % get options
@@ -348,8 +268,8 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
     opts_out.chunk_size = optimget(opts_in, 'chunk_size', defaultopt, 'fast');
     opts_out.parallelEval = optimget(opts_in, 'parallelEval', defaultopt, 'fast');
-    opts_out.obj = optimget(opts_in, 'objective', defaultopt, 'fast');
-    opts_out.buffer = optimget(opts_in, 'skill_score_buffer', defaultopt, 'fast');
+    opts_out.sign = optimget(opts_in, 'OF_sign', defaultopt, 'fast');
+    opts_out.pc_top = optimget(opts_in, 'pc_top_performance', defaultopt, 'fast');
 
 end
 
