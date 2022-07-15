@@ -17,8 +17,7 @@ if ~isfile(file_log) || o.overwrite
     [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
 
     % set that none have happened yet
-    %simdata.n_done = 0;
-    simdata.done = zeros(1,o.n);
+    simdata.to_do = ones(1,o.n);
     simdata.total_time = 0;
     simdata.chunk_time = [];
 
@@ -32,22 +31,55 @@ else
     load(file_log, "o", "model", "Qobs", "simdata");
 end
 
-if any(~simdata.done)
+if any(simdata.to_do)
     % prepare output (i.e. list of 10% of best performing sets for each ts)
     n_to_keep       = ceil(o.n * o.pc_top);
     top_performance = o.sign * inf(n_to_keep, numel(simdata.OF_idx));
-    while any(~simdata.done)
+    if all(simdata.to_do)
+        % create a new mat file for each timestep to store the top 10% of
+        % simulation results
+        output = cell(size(top_performance, 1), 1);
+        for j = 1:numel(simdata.OF_idx)
+            this_file_name = [o.file_prefix '_' num2str(simdata.OF_idx(j)) '.mat'];
+            save(this_file_name, 'output')
+        end
+    end
+    while any(simdata.to_do)
         % run a single chunk
         chunk_time = tic;
-        [top_perf, output, simdata] = ...
+        if o.parallelEval == 0
+        [top_perf, output, theta_done] = ...
             run_chunk_simulations(simdata, top_performance, model, Qobs, o);
+        else
+            poolobj = gcp('nocreate');
+            if isempty(poolobj); parpool; end
+            %workers = poolobj.NumWorkers;
+            ids_to_do = find(simdata.to_do);
+            spmd
+                this_start_i = 1 + (labindex-1)*o.chunk_size;
+                this_end_i = min(this_start_i + o.chunk_size - 1, size(ids_to_do,2));
+                this_theta_ids = ids_to_do(this_start_i:this_end_i);
+                this_simdata = simdata;
+                this_simdata.to_do = zeros(size(simdata.to_do));
+                this_simdata.to_do(this_theta_ids) = 1;
+
+                [top_perf_par, output_par, theta_done_par] = ...
+                    run_chunk_simulations(this_simdata, top_performance, model, Qobs, o);
+            end
+
+            [top_perf, output, theta_done] = ...
+                combine_from_workers(top_perf_par, output_par, theta_done_par,o.sign);
+
+%%%%%%%%%% PICK THIS UP FROM HERE>
+
+        end
+        simdata.to_do(theta_done) = 0;
         top_performance = top_perf.perf;
         save_chunk_data(output, top_perf, o, simdata.OF_idx)
         simdata.chunk_time(end+1) = toc(chunk_time);
         simdata.total_time = sum(simdata.chunk_time);
         if o.display; print_summary(simdata, o); end
     end
-
 
     % create the header, which is common for all files
     flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
@@ -75,23 +107,12 @@ if any(~simdata.done)
 end
 end
 
-function [top_perf, output, simdata] = ...
+function [top_perf, output, theta_done] = ...
     run_chunk_simulations(simdata, top_performance, model, Qobs, o)
 
     theta_sample = simdata.theta_sample;
     OF_idx = simdata.OF_idx;
-    
-    all_performance = zeros(o.n, numel(OF_idx));
-
-    if all(~simdata.done)
-        % create a new mat file for each timestep to store the top 10% of
-        % simulation results
-        output = cell(size(top_performance, 1), 1);
-        for j = 1:numel(OF_idx)
-            this_file_name = [o.file_prefix '_' num2str(OF_idx(j)) '.mat'];
-            save(this_file_name, 'output')
-        end
-    end
+    theta_done = [];
 
     % before we start the loop, prepare the output cell
     this_chunk_output = cell(o.chunk_size,numel(OF_idx));
@@ -102,9 +123,9 @@ function [top_perf, output, simdata] = ...
     where_top_performance = zeros(size(top_performance));
 
     % loop through each set of thetas
-    while chunk_id < o.chunk_size && any(~simdata.done); chunk_id = chunk_id +1;
+    while chunk_id < o.chunk_size && any(simdata.to_do); chunk_id = chunk_id +1;
         % get the first undone parameter set
-        this_theta_id = find(~simdata.done, 1, 'first');
+        this_theta_id = find(simdata.to_do, 1, 'first');
         this_theta = theta_sample(:,this_theta_id);
 
         % run the model with this parameter set
@@ -115,7 +136,6 @@ function [top_perf, output, simdata] = ...
 
         % calculate performance over time
         perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
-        all_performance(this_theta_id, :) = perf_over_time;
 
         % check the steps where the new performance is better than the
         % worst one in the top 10%
@@ -161,7 +181,8 @@ function [top_perf, output, simdata] = ...
             % append it to what's already existing
             this_chunk_output{chunk_id, t} = csv_txt;
         end
-        simdata.done(this_theta_id) = 1;
+        simdata.to_do(this_theta_id) = 0;
+        theta_done(end+1) = this_theta_id;
     end
 
     % format output
@@ -198,7 +219,7 @@ end
 
 function [] = print_summary(simdata, o)
     
-    n_done = sum(simdata.done);
+    n_done = sum(simdata.to_do == 0);
     total_time = simdata.total_time;
     last_chunk_time = simdata.chunk_time(end);
     msg = ['Simulations done: ', num2str(n_done), '/', num2str(o.n),...
@@ -309,6 +330,55 @@ function [average_at_timesteps] = calc_avg_at_timesteps(data, timesteps, window)
 
 end
 
-function [] = save_tmp_data(tmp_file, done_ids, output)
-    save(tmp_file, "done_ids", "output");
+function  [top_perf, output, theta_done] = ...
+                combine_from_workers(top_perf_par, output_par, theta_done_par, perf_sign)
+    
+    % get everything from the first worker, this will later be update with
+    % data from the other workers
+    workers = numel(top_perf_par);
+    top_perf = top_perf_par{1};
+    top_performance = top_perf.perf;
+    where_top_performance = top_perf.idx;
+    output = output_par{1};
+    theta_done = theta_done_par{1};
+
+    for w=2:workers
+
+        this_w_perf = top_perf_par{w};
+        this_w_output = output_par{w};
+
+        n_output = size(output,1);
+        output = [output; this_w_output];
+
+        theta_done = [theta_done, theta_done_par{w}];
+
+        for s=1:size(this_w_perf.perf,1)
+            this_performance = this_w_perf.perf(s,:);
+            where_this_performance = this_w_perf.idx(s,:);
+
+            % check the steps where the new performance is better than the
+            % worst one in the top 10%
+            [worst_top_performance, subs] = (max(top_performance*perf_sign, [], 1));
+            steps_to_keep  = this_performance * perf_sign < worst_top_performance & where_this_performance ~= 0;
+
+            % this is all needed to do the substitutions into
+            % 'top_performance'
+            [a,b] = size(top_performance);
+            subs_real_tmp = (((a * (1:b)) - a) + subs);
+            subs_real = subs_real_tmp(steps_to_keep);
+
+            % update the top performance for the next step, so that we
+            % don't do unnecessary calculations in case this one is better
+            % than the next theta
+            this_OF_vals = this_performance(steps_to_keep);
+            top_performance(subs_real) = this_OF_vals;
+
+            %this tells us where the value of top_performance is found (0=previous chunk)
+            where_top_performance(subs_real) = where_this_performance(steps_to_keep) + n_output;
+        end     
+    end
+
+    % put everything together in top_perf before ending the function
+    top_perf.perf = top_performance;
+    top_perf.idx = where_top_performance;
 end
