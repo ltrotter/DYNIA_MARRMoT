@@ -3,6 +3,17 @@ function [] = run_dynia_simulations(model, Qobs, options)
 % get all options
 if nargin <3 || isempty(options); options = struct(); end
 o = get_dynia_options(options);
+if isstruct(o.windows)
+    step  = o.windows.step;
+    width = o.windows.size;
+
+    n_of_steps = length(Qobs);
+    w_start = 1:step:(n_of_steps-width);
+    w_end   = width:step:n_of_steps; 
+
+    windows = [w_start', w_end'];
+    o.windows = windows;
+end
 
 % check if this has been started already
 file_log   = [o.file_prefix, '.mat'];
@@ -14,7 +25,9 @@ if ~isfile(file_log) || o.overwrite
     simdata.theta_sample = lhs_sample_par(model,o.n, o.theta, 1234);
 
     % identify the indices of the OF calculation, based on Qobs
-    [~, simdata.OF_idx] = calc_of_moving_window(Qobs,Qobs,o.window,o.step,o.of_name, o.precision_Q+1, o.of_args{:});
+    [~, nonmissingwindows] = calc_of_moving_window(Qobs,Qobs,o.windows,o.of_name, o.precision_Q+1, o.of_args{:});
+    simdata.OF_idx = o.windows(nonmissingwindows, :);
+
 
     % set that none have happened yet
     simdata.to_do = ones(1,o.n);
@@ -34,13 +47,15 @@ end
 if any(simdata.to_do)
     % prepare output (i.e. list of 10% of best performing sets for each ts)
     n_to_keep       = ceil(o.n * o.pc_top);
-    top_performance = o.sign * inf(n_to_keep, numel(simdata.OF_idx));
+    top_performance = o.sign * inf(n_to_keep, size(simdata.OF_idx, 1));
     if all(simdata.to_do)
         % create a new mat file for each timestep to store the top 10% of
         % simulation results
         output = cell(size(top_performance, 1), 1);
-        for j = 1:numel(simdata.OF_idx)
-            this_file_name = [o.file_prefix '_' num2str(simdata.OF_idx(j)) '.mat'];
+        for j = 1:size(simdata.OF_idx, 1)
+            this_file_name = [o.file_prefix, '_',...
+                              num2str(simdata.OF_idx(j, 1)), '-',...
+                              num2str(simdata.OF_idx(j, 2)), '.mat'];
             save(this_file_name, 'output')
         end
     end
@@ -84,9 +99,9 @@ if any(simdata.to_do)
     store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
     header = ['OF_value,',  num2str(1:model.numParams, 'theta_%i,'),flux_names{:}, store_names{:}];
     header(end) = []; header = [header, '\n'];
-    for i=1:numel(simdata.OF_idx)
-        t = simdata.OF_idx(i);
-        this_file = [o.file_prefix, '_', num2str(t)];
+    for i=1:size(simdata.OF_idx,1)
+        this_file = [o.file_prefix, '_', num2str(simdata.OF_idx(i, 1)),...
+                     '-', num2str(simdata.OF_idx(i, 2))];
         load(this_file, 'output');
 
         csv_file = [this_file, '.csv'];
@@ -113,7 +128,7 @@ function [top_perf, output, theta_done] = ...
     theta_done = [];
 
     % before we start the loop, prepare the output cell
-    this_chunk_output = cell(o.chunk_size,numel(OF_idx));
+    this_chunk_output = cell(o.chunk_size,size(OF_idx, 1));
 
     % set that this is a new chunk
     chunk_id = 0;
@@ -133,7 +148,7 @@ function [top_perf, output, theta_done] = ...
         Qsim = model.get_streamflow();
 
         % calculate performance over time
-        perf_over_time = calc_of_moving_window(Qsim, Qobs, o.window, o.step, o.of_name, o.precision_Q+1, o.of_args{:});
+        perf_over_time = calc_of_moving_window(Qsim, Qobs, o.windows, o.of_name, o.precision_Q+1, o.of_args{:});
 
         % check the steps where the new performance is better than the
         % worst one in the top 10%
@@ -155,13 +170,14 @@ function [top_perf, output, theta_done] = ...
 
         % get values of stores and fluxes foe each of the ones that
         % needs keeping
-        OF_idx_to_keep = OF_idx(steps_to_keep);
-        fluxes = calc_avg_at_timesteps(model.fluxes, OF_idx_to_keep, o.window);
-        stores = calc_avg_at_timesteps(model.stores, OF_idx_to_keep, o.window);
+        OF_idx_to_keep = OF_idx(steps_to_keep, :);
+        fluxes = calc_avg_in_windows(model.fluxes, OF_idx_to_keep);
+        stores = calc_avg_in_windows(model.stores, OF_idx_to_keep);
 
+        tmp = find(steps_to_keep);
         % for each of those steps
-        for i = 1:numel(OF_idx_to_keep)
-            tmp = find(steps_to_keep);
+        for i = 1:size(OF_idx_to_keep, 1)
+            
             t = tmp(i);
 
             % get all the useful data
@@ -196,10 +212,10 @@ function [] = save_chunk_data(chunk_output, top_perf, o, OF_idx)
     % for each timestep
     for i=1:size(chunk_output, 2)
         if(all(where_top_performance(:,i)==0));continue;end
-        t = OF_idx(i); %get the timestep number
 
         % load the existing results
-        this_t_filename = [o.file_prefix, '_', num2str(t)];
+        this_t_filename = [o.file_prefix, '_', num2str(OF_idx(i, 1)), ...
+                           '-', num2str(OF_idx(i, 2))];
         load(this_t_filename, 'output');
         old_output = output;
         
@@ -254,8 +270,6 @@ function opts_out = get_dynia_options(opts_in)
 
     defaultopt = struct('repeats', 2e5, ...
                         'of_name', 'of_KGE', ...
-                        'window_size', 31, ...
-                        'window_step', 1,...
                         'file_prefix', 'DYNIA', ...
                         'precision_Q', 4, ...
                         'precision_OF', 4,...
@@ -268,12 +282,12 @@ function opts_out = get_dynia_options(opts_in)
                         'OF_sign',-1,...
                         'pc_top_performance', .1);
     defaultopt.of_args = cell(0);
+    defaultopt.windows.size = 31;
+    defaultopt.windows.step = 1;
 
     % get options
     opts_out.n = optimget(opts_in, 'repeats', defaultopt, 'fast');
     opts_out.of_name = optimget(opts_in, 'of_name', defaultopt, 'fast');
-    opts_out.window = optimget(opts_in, 'window_size', defaultopt, 'fast');
-    opts_out.step = optimget(opts_in, 'window_step', defaultopt, 'fast');
     opts_out.file_prefix = optimget(opts_in, 'file_prefix', defaultopt, 'fast');
     opts_out.precision_Q = optimget(opts_in, 'precision_Q', defaultopt, 'fast');
     opts_out.precision_OF = optimget(opts_in, 'precision_OF', defaultopt, 'fast');
@@ -287,22 +301,26 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.sign = optimget(opts_in, 'OF_sign', defaultopt, 'fast');
     opts_out.pc_top = optimget(opts_in, 'pc_top_performance', defaultopt, 'fast');
 
+    opts_out.windows = optimget(opts_in, 'windows', defaultopt, 'fast');
+
 end
 
-function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,window,step,of_name,precision,varargin)
+function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsim,Qobs,windows,of_name,precision,varargin)
 
     if isempty(precision); precision = 3; end
-    [T,n] = size(Qsim);
 
-    half_window = floor(window/2);
-    idx = (half_window+1):step:(T-half_window-1);
-    of_over_time = NaN(numel(idx),n);
-    for i = 1:numel(idx)
-        rand_perm = rand(2*half_window+1,1)*10^-precision;
-        this_idx = idx(i);
-        Qobs_in_window = Qobs(this_idx-half_window:this_idx+half_window) + rand_perm;
-        if any(Qobs_in_window < 0) || any(isnan(Qobs_in_window)); continue; end
-        Qsim_in_window = Qsim(this_idx-half_window:this_idx+half_window,:) + rand_perm;
+    n = size(Qsim, 2);  % number of parameter sets (this is actually always 1, it used to be different)
+    t = size(windows,1); % number of windows
+
+    of_over_time = NaN(t,n);
+    for i = 1:t
+        this_window = windows(i, :);
+        Qobs_in_window_raw = Qobs(this_window(1) : this_window(2));
+        if any(Qobs_in_window_raw < 0) || any(isnan(Qobs_in_window_raw)); continue; end
+        this_window_size = length(Qobs_in_window_raw);
+        rand_perm = rand(this_window_size,1)*10^-precision; 
+        Qobs_in_window = Qobs_in_window_raw + rand_perm;
+        Qsim_in_window = Qsim(this_window(1) : this_window(2), :) + rand_perm;
         for p = 1:n
             of_over_time(i,p) = feval(of_name,Qobs_in_window,Qsim_in_window(:,p),varargin{:});
         end
@@ -310,20 +328,18 @@ function [of_over_time_non_missing, idx_non_missing] = calc_of_moving_window(Qsi
 
     missing_timesteps = isnan(of_over_time(:,1));
     of_over_time_non_missing = of_over_time(~missing_timesteps,:);
-    idx_non_missing = idx(~missing_timesteps);
+    idx_non_missing = find(~missing_timesteps);
 
 end
 
-function [average_at_timesteps] = calc_avg_at_timesteps(data, timesteps, window)
+function [average_in_windows] = calc_avg_in_windows(data, windows)
 
-    half_window = floor(window/2);
-    T = numel(timesteps);
+    t = size(windows,1);
 
-    average_at_timesteps = NaN(T,size(data,2));
+    average_in_windows = NaN(t,size(data,2));
 
-    for i=1:T
-        t = timesteps(i);
-        average_at_timesteps(i,:) = mean(data(t-half_window:t+half_window,:),1);
+    for i=1:t
+        average_in_windows(i,:) = mean(data(windows(i,1):windows(i,2),:),1);
     end
 
 end
