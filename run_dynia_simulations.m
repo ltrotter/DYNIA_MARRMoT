@@ -70,8 +70,6 @@ if any(simdata.to_do)
             [top_perf, output, theta_done] = ...
                 combine_from_workers(top_perf_par, output_par, theta_done_par,o.sign);
 
-%%%%%%%%%% PICK THIS UP FROM HERE>
-
         end
         simdata.to_do(theta_done) = 0;
         top_performance = top_perf.perf;
@@ -345,21 +343,47 @@ function  [top_perf, output, theta_done] = ...
     for w=2:workers
 
         this_w_perf = top_perf_par{w};
+
+        this_w_performance = this_w_perf.perf;
+        where_this_w_performance = this_w_perf.idx;
+
+        % end here if all values are from previous chunks
+        if all(where_this_w_performance == 0); continue; end 
+
+        % all values that come from previous chunks can be set to really bad
+        this_w_performance(where_this_w_performance == 0) = perf_sign * inf;
+
+        % arrange the values in descending order
+        [~, order] = sort(perf_sign * this_w_performance, 1);
+        real_order = sub2ind(size(order), order, repmat(1:size(order,2), size(order,1), 1));
+        this_w_performance = this_w_performance(real_order);
+        where_this_w_performance = where_this_w_performance(real_order);
+
+        % remove rows made up completely of inf
+        allinf = all(isinf(this_w_performance),2);
+        this_w_performance(allinf,:) = [];
+        where_this_w_performance(allinf,:) = [];
+
+        % get the output from this worker
         this_w_output = output_par{w};
 
+        % add it to the output from the previous workers
         n_output = size(output,1);
         output = [output; this_w_output];
 
+        % update the list of parameters done
         theta_done = [theta_done, theta_done_par{w}];
 
-        for s=1:size(this_w_perf.perf,1)
-            this_performance = this_w_perf.perf(s,:);
-            where_this_performance = this_w_perf.idx(s,:);
+        for s=1:size(this_w_performance,1)
+            this_performance = this_w_performance(s,:);
+            where_this_performance = where_this_w_performance(s,:);
 
             % check the steps where the new performance is better than the
             % worst one in the top 10%
             [worst_top_performance, subs] = (max(top_performance*perf_sign, [], 1));
             steps_to_keep  = this_performance * perf_sign < worst_top_performance & where_this_performance ~= 0;
+            % end here if you've got nothing to keep
+            if all(~steps_to_keep); continue; end
 
             % this is all needed to do the substitutions into
             % 'top_performance'
