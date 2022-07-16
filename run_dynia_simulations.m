@@ -96,6 +96,8 @@ if any(simdata.to_do)
         if o.display; print_summary(simdata, o); end
     end
 
+    if ~isempty(poolobj); delete(poolobj); end
+
     % create the header, which is common for all files
     flux_names  = cellfun(@(fn) ['flux_',fn,','], cellstr(model.FluxNames), 'UniformOutput', false);
     store_names = cellfun(@(sn) [sn,','], cellstr(model.StoreNames), 'UniformOutput', false);
