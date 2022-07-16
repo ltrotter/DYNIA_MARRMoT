@@ -74,6 +74,7 @@ if any(simdata.to_do)
                 this_start_i = 1 + (labindex-1)*o.chunk_size;
                 this_end_i = min(this_start_i + o.chunk_size - 1, size(ids_to_do,2));
                 this_theta_ids = ids_to_do(this_start_i:this_end_i);
+                %disp(this_theta_ids);
                 this_simdata = simdata;
                 this_simdata.to_do = zeros(size(simdata.to_do));
                 this_simdata.to_do(this_theta_ids) = 1;
@@ -91,6 +92,7 @@ if any(simdata.to_do)
         save_chunk_data(output, top_perf, o, simdata.OF_idx)
         simdata.chunk_time(end+1) = toc(chunk_time);
         simdata.total_time = sum(simdata.chunk_time);
+        save(file_log, "simdata", "-append");
         if o.display; print_summary(simdata, o); end
     end
 
@@ -363,6 +365,10 @@ function  [top_perf, output, theta_done] = ...
         this_w_performance = this_w_perf.perf;
         where_this_w_performance = this_w_perf.idx;
 
+        % update the list of parameters done first, otherwile it'd be
+        % skipped
+        theta_done = [theta_done, theta_done_par{w}];
+
         % end here if all values are from previous chunks
         if all(where_this_w_performance == 0); continue; end 
 
@@ -386,9 +392,6 @@ function  [top_perf, output, theta_done] = ...
         % add it to the output from the previous workers
         n_output = size(output,1);
         output = [output; this_w_output];
-
-        % update the list of parameters done
-        theta_done = [theta_done, theta_done_par{w}];
 
         for s=1:size(this_w_performance,1)
             this_performance = this_w_performance(s,:);
