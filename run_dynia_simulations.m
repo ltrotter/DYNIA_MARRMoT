@@ -47,7 +47,7 @@ end
 if any(simdata.to_do)
     % prepare output (i.e. list of 10% of best performing sets for each ts)
     n_to_keep       = ceil(o.n * o.pc_top);
-    top_performance = o.sign * inf(n_to_keep, size(simdata.OF_idx, 1));
+    top_performance = -o.sign * inf(n_to_keep, size(simdata.OF_idx, 1));
     if all(simdata.to_do)
         % create a new mat file for each timestep to store the top 10% of
         % simulation results
@@ -156,8 +156,8 @@ function [top_perf, output, theta_done] = ...
 
         % check the steps where the new performance is better than the
         % worst one in the top 10%
-        [worst_top_performance, subs] = (max(top_performance*o.sign, [], 1));
-        steps_to_keep  = perf_over_time * o.sign < worst_top_performance';
+        [worst_top_performance, subs] = (min(top_performance*o.sign, [], 1));
+        steps_to_keep  = perf_over_time * o.sign > worst_top_performance';
 
         % this is all needed to do the substitutions into
         % 'top_performance'
@@ -283,7 +283,7 @@ function opts_out = get_dynia_options(opts_in)
                         'theta', [],...
                         'chunk_size', 1000,...
                         'parallelEval', 0, ...
-                        'OF_sign',-1,...
+                        'of_sign',-1,...
                         'pc_top_performance', .1);
     defaultopt.of_args = cell(0);
     defaultopt.windows.size = 31;
@@ -302,7 +302,7 @@ function opts_out = get_dynia_options(opts_in)
     opts_out.theta = optimget(opts_in, 'theta', defaultopt, 'fast');
     opts_out.chunk_size = optimget(opts_in, 'chunk_size', defaultopt, 'fast');
     opts_out.parallelEval = optimget(opts_in, 'parallelEval', defaultopt, 'fast');
-    opts_out.sign = optimget(opts_in, 'OF_sign', defaultopt, 'fast');
+    opts_out.sign = optimget(opts_in, 'of_sign', defaultopt, 'fast');
     opts_out.pc_top = optimget(opts_in, 'pc_top_performance', defaultopt, 'fast');
 
     opts_out.windows = optimget(opts_in, 'windows', defaultopt, 'fast');
@@ -401,8 +401,11 @@ function  [top_perf, output, theta_done] = ...
 
             % check the steps where the new performance is better than the
             % worst one in the top 10%
-            [worst_top_performance, subs] = (max(top_performance*perf_sign, [], 1));
-            steps_to_keep  = this_performance * perf_sign < worst_top_performance & where_this_performance ~= 0;
+
+            [worst_top_performance, subs] = (min(top_performance*perf_sign, [], 1));
+            steps_to_keep  = this_performance * perf_sign > worst_top_performance & where_this_performance ~= 0;
+            %steps_to_keep  = perf_over_time * perf_sign > worst_top_performance' & where_this_performance ~= 0;
+
             % end here if you've got nothing to keep
             if all(~steps_to_keep); continue; end
 
